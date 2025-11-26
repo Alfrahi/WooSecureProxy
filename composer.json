@@ -1,0 +1,17 @@
+{
+    "name": "alfrahi/woosecureproxy",
+    "description": "Secure WooCommerce REST proxy with HMAC + JWT",
+    "require": {
+        "php": ">=7.4",
+        "firebase/php-jwt": "^6.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "WooSecureProxy\\": "src/"
+        }
+    },
+    "config": {
+        "optimize-autoloader": true,
+        "sort-packages": true
+    }
+}
