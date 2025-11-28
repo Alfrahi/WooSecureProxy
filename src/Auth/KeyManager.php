@@ -73,7 +73,7 @@ class KeyManager {
 			add_action( 'admin_notices', array( __CLASS__, 'show_auth_warning' ) );
 			return array();
 		}
-		
+
 		return array(
 			'Authorization' => 'Basic ' . base64_encode( WC_CONSUMER_KEY . ':' . WC_CONSUMER_SECRET ),
 		);

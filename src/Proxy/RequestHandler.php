@@ -177,7 +177,7 @@ class RequestHandler {
 		}
 
 		$action = isset( $body['action'] ) ? $body['action'] : '';
-		$data   = isset( $body['data'] )   ? $body['data']   : null;
+		$data   = isset( $body['data'] ) ? $body['data'] : null;
 		$method = strtoupper( isset( $body['method'] ) ? $body['method'] : 'GET' );
 
 		if ( $action === '' ) {
