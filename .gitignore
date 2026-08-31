@@ -1,0 +1,21 @@
+# Dependencies (shipped in release zips, not git-tracked)
+/vendor/
+
+# PHP / Composer
+composer.phar
+.phpunit.result.cache
+.phpunit.cache/
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/
+
+# Local agent / tooling config
+.qwen/
+
+# Logs
+*.log
