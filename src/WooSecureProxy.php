@@ -3,8 +3,7 @@
  * Main plugin class.
  *
  * Central entry point and orchestrator for the WooSecureProxy plugin.
- * Implemented as a singleton to ensure only one instance exists and to provide
- * global access via WooSecureProxy::instance().
+ * Instantiated once by the plugin bootstrap.
  *
  * Responsibilities:
  * - Bootstrap admin settings page (only in admin context)
@@ -19,18 +18,13 @@ namespace WooSecureProxy;
 
 final class WooSecureProxy {
 
-	use Traits\Singleton;
-
 	/**
-	 * Private constructor.
-	 *
-	 * Sets up the primary initialization hook. Direct instantiation is prevented
-	 * by the Singleton trait.
+	 * Sets up the primary initialization hook.
 	 *
 	 * @return void
 	 * @since  1.0.0
 	 */
-	private function __construct() {
+	public function __construct() {
 		add_action( 'init', array( $this, 'init' ) );
 	}
 

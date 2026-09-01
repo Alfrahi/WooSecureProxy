@@ -211,7 +211,7 @@ add_action(
  * - Checks for WooCommerce
  * - Sets up non-persistent cache groups for nonces and rate limiting
  * - Loads text domain
- * - Starts the main plugin singleton
+ * - Starts the main plugin orchestrator
  */
 add_action(
 	'plugins_loaded',
@@ -256,7 +256,7 @@ add_action(
 			);
 		}
 
-		\WooSecureProxy\WooSecureProxy::instance();
+		new \WooSecureProxy\WooSecureProxy();
 	}
 );
 

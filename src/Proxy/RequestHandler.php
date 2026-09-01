@@ -161,165 +161,312 @@ class RequestHandler {
 	 * @return WP_REST_Response Standardized JSON response.
 	 */
 	private function dispatch_request( WP_REST_Request $request ): WP_REST_Response {
-		$start_time = microtime( true );
-		$request_id = bin2hex( random_bytes( 8 ) );
-		$ip         = Helpers\IpDetector::get_client_ip();
-		$raw_body   = $request->get_body();
+		// Pipeline stages run in order; any guard returning a response halts the chain.
+		$ctx = array(
+			'request'    => $request,
+			'request_id' => bin2hex( random_bytes( 8 ) ),
+			'ip'         => Helpers\IpDetector::get_client_ip(),
+			'raw_body'   => $request->get_body(),
+			'start_time' => microtime( true ),
+		);
 
-		// Critical: internal auth must be configured.
+		foreach (
+			array(
+				'guard_server_config',
+				'guard_size',
+				'guard_parse_headers',
+				'guard_signature',
+				'guard_replay',
+				'guard_parse_body',
+				'guard_auth_endpoints',
+				'guard_allowlist',
+				'guard_authn',
+				'guard_authz',
+				'inject_customer_context',
+				'guard_rate_limit',
+				'guard_schema',
+				'guard_upstream_url',
+				'dispatch_upstream',
+			) as $stage
+		) {
+			$result = $this->{$stage}( $ctx );
+			if ( $result instanceof WP_REST_Response ) {
+				return $result;
+			}
+		}
+
+		// Unreachable — dispatch_upstream() always returns a response.
+		return $this->error( 'internal_error', 'Internal server error', 500, $ctx['request_id'] );
+	}
+
+	/**
+	 * Pipeline stage: extract and validate required headers.
+	 *
+	 * @param array<string, mixed> $ctx Pipeline context (headers added by reference).
+	 * @return WP_REST_Response|null
+	 */
+	private function guard_parse_headers( array &$ctx ): ?WP_REST_Response {
+		$ctx['headers'] = $this->extract_headers( $ctx['request'] );
+		Helpers\Logger::info( "REQ {$ctx['request_id']} | IP: {$ctx['ip']} | App: " . ( $ctx['headers']['app_token'] ?? 'missing' ) );
+		return $this->validate_headers( $ctx['headers'], $ctx['request_id'] );
+	}
+
+	/**
+	 * Pipeline stage: HMAC signature verification.
+	 *
+	 * @param array<string, mixed> $ctx Pipeline context.
+	 * @return WP_REST_Response|null
+	 */
+	private function guard_signature( array $ctx ): ?WP_REST_Response {
+		return $this->verify_signature( $ctx['headers'], $ctx['raw_body'], $ctx['request_id'] );
+	}
+
+	/**
+	 * Pipeline stage: nonce replay protection.
+	 *
+	 * @param array<string, mixed> $ctx Pipeline context.
+	 * @return WP_REST_Response|null
+	 */
+	private function guard_replay( array $ctx ): ?WP_REST_Response {
+		return $this->check_replay( $ctx['headers']['nonce'], $ctx['request_id'] );
+	}
+
+	/**
+	 * Pipeline stage: internal WooCommerce auth must be configured.
+	 *
+	 * @param array<string, mixed> $ctx Pipeline context.
+	 * @return WP_REST_Response|null
+	 */
+	private function guard_server_config( array $ctx ): ?WP_REST_Response {
 		if ( ! KeyManager::is_configured() ) {
 			return KeyManager::get_disabled_response();
 		}
+		return null;
+	}
 
-		// Size & emptiness checks.
-		if ( strlen( $raw_body ) > self::MAX_BODY_SIZE ) {
-			return $this->error( 'payload_too_large', 'Request payload exceeds size limit', 413, $request_id );
+	/**
+	 * Pipeline stage: enforce body size limit and reject empty payloads.
+	 *
+	 * @param array<string, mixed> $ctx Pipeline context.
+	 * @return WP_REST_Response|null
+	 */
+	private function guard_size( array $ctx ): ?WP_REST_Response {
+		if ( strlen( $ctx['raw_body'] ) > self::MAX_BODY_SIZE ) {
+			return $this->error( 'payload_too_large', 'Request payload exceeds size limit', 413, $ctx['request_id'] );
 		}
-		if ( trim( $raw_body ) === '' ) {
-			return $this->error( 'empty_payload', 'Request body is empty', 400, $request_id );
+		if ( trim( $ctx['raw_body'] ) === '' ) {
+			return $this->error( 'empty_payload', 'Request body is empty', 400, $ctx['request_id'] );
 		}
+		return null;
+	}
 
-		$headers = $this->extract_headers( $request );
-		Helpers\Logger::info( "REQ {$request_id} | IP: {$ip} | App: " . ( $headers['app_token'] ?? 'missing' ) );
-
-		// Header validation.
-		$header_error = $this->validate_headers( $headers, $request_id );
-		if ( $header_error ) {
-			return $header_error;
-		}
-
-		// HMAC signature verification.
-		$signature_error = $this->verify_signature( $headers, $raw_body, $request_id );
-		if ( $signature_error ) {
-			return $signature_error;
-		}
-
-		// Replay attack protection.
-		$replay_error = $this->check_replay( $headers['nonce'], $request_id );
-		if ( $replay_error ) {
-			return $replay_error;
-		}
-
-		// Parse JSON body.
+	/**
+	 * Pipeline stage: parse JSON body into action/data/method.
+	 *
+	 * @param array<string, mixed> $ctx Pipeline context (action/data/method/customer_id added by reference).
+	 * @return WP_REST_Response|null
+	 */
+	private function guard_parse_body( array &$ctx ): ?WP_REST_Response {
 		try {
-			$body = json_decode( $raw_body, true, 512, JSON_THROW_ON_ERROR );
+			$body = json_decode( $ctx['raw_body'], true, 512, JSON_THROW_ON_ERROR );
 		} catch ( \Throwable $e ) {
-			return $this->error( 'invalid_json', 'Request body is not valid JSON', 400, $request_id );
+			return $this->error( 'invalid_json', 'Request body is not valid JSON', 400, $ctx['request_id'] );
 		}
 
 		if ( ! is_array( $body ) ) {
-			return $this->error( 'invalid_payload', 'Request root must be a JSON object', 400, $request_id );
+			return $this->error( 'invalid_payload', 'Request root must be a JSON object', 400, $ctx['request_id'] );
 		}
 
-		$action = isset( $body['action'] ) ? $body['action'] : '';
-		$data   = isset( $body['data'] ) ? $body['data'] : null;
-		$method = strtoupper( isset( $body['method'] ) ? $body['method'] : 'GET' );
+		$ctx['action'] = isset( $body['action'] ) ? $body['action'] : '';
+		$ctx['data']   = isset( $body['data'] ) ? $body['data'] : null;
+		$ctx['method'] = strtoupper( isset( $body['method'] ) ? $body['method'] : 'GET' );
 
-		if ( $action === '' ) {
-			return $this->error( 'missing_action', 'Request must include "action"', 400, $request_id );
+		if ( $ctx['action'] === '' ) {
+			return $this->error( 'missing_action', 'Request must include "action"', 400, $ctx['request_id'] );
 		}
 
-		if ( $data === null || ! is_array( $data ) ) {
-			return $this->error( 'invalid_data', '"data" field must be a JSON object', 400, $request_id );
+		if ( null === $ctx['data'] || ! is_array( $ctx['data'] ) ) {
+			return $this->error( 'invalid_data', '"data" field must be a JSON object', 400, $ctx['request_id'] );
 		}
 
-		// Customer JWT authentication.
-		$customer_id = $this->get_customer_id_from_jwt( $request );
+		$ctx['customer_id'] = $this->get_customer_id_from_jwt( $ctx['request'] );
 
-		// Special built-in auth endpoints — rate-limited BEFORE dispatch (brute-force fix).
-		if ( in_array( $action, array( 'customerLogin', 'customerRegister', 'refreshToken', 'customerLogout' ), true ) ) {
-			$auth_rate_error = $this->rate_limit( $headers['app_token'], $ip, $action, $request_id );
-			if ( $auth_rate_error ) {
-				return $auth_rate_error;
-			}
-			return $this->handle_customer_auth( $action, $data, $request_id, $request );
+		return null;
+	}
+
+	/**
+	 * Pipeline stage: built-in auth endpoints (login/register/refresh/logout).
+	 * Rate-limited before dispatch to block brute force.
+	 *
+	 * @param array<string, mixed> $ctx Pipeline context.
+	 * @return WP_REST_Response|null
+	 */
+	private function guard_auth_endpoints( array $ctx ): ?WP_REST_Response {
+		if ( ! in_array( $ctx['action'], array( 'customerLogin', 'customerRegister', 'refreshToken', 'customerLogout' ), true ) ) {
+			return null;
 		}
 
-		// Action whitelist & method check.
-		$action_config = isset( $this->allowed_actions[ $action ] ) ? $this->allowed_actions[ $action ] : null;
-		if ( ! $action_config || ! in_array( $method, $action_config['methods'], true ) ) {
-			return $this->error( 'action_not_allowed', 'Requested action or method is not permitted', 403, $request_id );
-		}
-
-		$auth_mode = $action_config['auth'];
-
-		// Enforce login when required.
-		if ( in_array( $auth_mode, array( 'customer', 'customer_self', 'customer_owner' ), true ) && ! $customer_id ) {
-			return $this->error( 'unauthenticated', 'Login required for this action', 401, $request_id );
-		}
-
-		// Self-access enforcement.
-		if ( $auth_mode === 'customer_self' ) {
-			$requested_id = isset( $data['id'] ) ? $data['id'] : 0;
-			if ( (int) $requested_id !== $customer_id ) {
-				return $this->error( 'forbidden', 'You can only access your own customer record', 403, $request_id );
-			}
-		}
-
-		// Order ownership enforcement.
-		if ( $auth_mode === 'customer_owner' ) {
-			$order_id = isset( $data['id'] ) ? $data['id'] : 0;
-			$order    = wc_get_order( $order_id );
-
-			if ( ! $order || $order->get_customer_id() !== $customer_id ) {
-				return $this->error( 'forbidden', 'You can only modify your own orders', 403, $request_id );
-			}
-		}
-
-		// Auto-fill customer context.
-		if ( $action === 'createOrder' && $customer_id ) {
-			$data['customer_id'] = $customer_id;
-		}
-		if ( $action === 'getOrders' && $customer_id ) {
-			$data['customer'] = $customer_id;
-		}
-
-		// Rate limiting.
-		$rate_error = $this->rate_limit( $headers['app_token'], $ip, $action, $request_id );
+		$rate_error = $this->rate_limit( $ctx['headers']['app_token'], $ctx['ip'], $ctx['action'], $ctx['request_id'] );
 		if ( $rate_error ) {
 			return $rate_error;
 		}
 
-		// JSON Schema validation (stub – ready for future schemas).
-		if ( isset( self::JSON_SCHEMAS[ $action ] ) ) {
-			$validator = new \JsonSchema\Validator();
-			$validator->validate( $data, (object) self::JSON_SCHEMAS[ $action ] );
+		return $this->handle_customer_auth( $ctx['action'], $ctx['data'], $ctx['request_id'], $ctx['request'] );
+	}
 
-			if ( ! $validator->isValid() ) {
-				$errors = array_map(
-					function ( $e ) {
-						return $e['property'] . ': ' . $e['message'];
-					},
-					$validator->getErrors()
-				);
-				Helpers\Logger::warning( "Schema violation | Action: {$action} | Errors: " . implode( '; ', $errors ) );
-				return $this->error( 'validation_failed', 'Request data does not match expected format', 400, $request_id );
+	/**
+	 * Pipeline stage: action whitelist and HTTP method check.
+	 *
+	 * @param array<string, mixed> $ctx Pipeline context.
+	 * @return WP_REST_Response|null
+	 */
+	private function guard_allowlist( array &$ctx ): ?WP_REST_Response {
+		$action_config = isset( $this->allowed_actions[ $ctx['action'] ] ) ? $this->allowed_actions[ $ctx['action'] ] : null;
+		if ( ! $action_config || ! in_array( $ctx['method'], $action_config['methods'], true ) ) {
+			return $this->error( 'action_not_allowed', 'Requested action or method is not permitted', 403, $ctx['request_id'] );
+		}
+		$ctx['action_config'] = $action_config;
+		return null;
+	}
+
+	/**
+	 * Pipeline stage: authentication — require a valid customer JWT when the
+	 * action's auth level demands it.
+	 *
+	 * @param array<string, mixed> $ctx Pipeline context.
+	 * @return WP_REST_Response|null
+	 */
+	private function guard_authn( array $ctx ): ?WP_REST_Response {
+		$auth_mode = $ctx['action_config']['auth'];
+		if ( in_array( $auth_mode, array( 'customer', 'customer_self', 'customer_owner' ), true ) && ! $ctx['customer_id'] ) {
+			return $this->error( 'unauthenticated', 'Login required for this action', 401, $ctx['request_id'] );
+		}
+		return null;
+	}
+
+	/**
+	 * Pipeline stage: authorization — self-access and order-ownership checks.
+	 *
+	 * @param array<string, mixed> $ctx Pipeline context.
+	 * @return WP_REST_Response|null
+	 */
+	private function guard_authz( array $ctx ): ?WP_REST_Response {
+		$auth_mode = $ctx['action_config']['auth'];
+
+		if ( 'customer_self' === $auth_mode ) {
+			$requested_id = isset( $ctx['data']['id'] ) ? $ctx['data']['id'] : 0;
+			if ( (int) $requested_id !== $ctx['customer_id'] ) {
+				return $this->error( 'forbidden', 'You can only access your own customer record', 403, $ctx['request_id'] );
 			}
 		}
 
-		// Build upstream WooCommerce URL.
-		// Pattern placeholders (e.g. `(?P<id>\d+)`) are substituted from $data using absint().
-		$endpoint = $action_config['ep'];
+		if ( 'customer_owner' === $auth_mode ) {
+			$order_id = isset( $ctx['data']['id'] ) ? $ctx['data']['id'] : 0;
+			$order    = wc_get_order( $order_id );
+
+			if ( ! $order || $order->get_customer_id() !== $ctx['customer_id'] ) {
+				return $this->error( 'forbidden', 'You can only modify your own orders', 403, $ctx['request_id'] );
+			}
+		}
+
+		return null;
+	}
+
+	/**
+	 * Pipeline stage: inject customer context into data for logged-in requests.
+	 *
+	 * @param array<string, mixed> $ctx Pipeline context.
+	 * @return WP_REST_Response|null
+	 */
+	private function inject_customer_context( array &$ctx ): ?WP_REST_Response {
+		if ( 'createOrder' === $ctx['action'] && $ctx['customer_id'] ) {
+			$ctx['data']['customer_id'] = $ctx['customer_id'];
+		}
+		if ( 'getOrders' === $ctx['action'] && $ctx['customer_id'] ) {
+			$ctx['data']['customer'] = $ctx['customer_id'];
+		}
+		return null;
+	}
+
+	/**
+	 * Pipeline stage: per-action, per-IP and per-app rate limits.
+	 *
+	 * @param array<string, mixed> $ctx Pipeline context.
+	 * @return WP_REST_Response|null
+	 */
+	private function guard_rate_limit( array $ctx ): ?WP_REST_Response {
+		return $this->rate_limit( $ctx['headers']['app_token'], $ctx['ip'], $ctx['action'], $ctx['request_id'] );
+	}
+
+	/**
+	 * Pipeline stage: JSON Schema validation (ready for per-action schemas).
+	 *
+	 * @param array<string, mixed> $ctx Pipeline context.
+	 * @return WP_REST_Response|null
+	 */
+	private function guard_schema( array $ctx ): ?WP_REST_Response {
+		if ( ! isset( self::JSON_SCHEMAS[ $ctx['action'] ] ) ) {
+			return null;
+		}
+
+		$validator = new \JsonSchema\Validator();
+		$validator->validate( $ctx['data'], (object) self::JSON_SCHEMAS[ $ctx['action'] ] );
+
+		if ( $validator->isValid() ) {
+			return null;
+		}
+
+		$errors = array_map(
+			function ( $e ) {
+				return $e['property'] . ': ' . $e['message'];
+			},
+			$validator->getErrors()
+		);
+		Helpers\Logger::warning( "Schema violation | Action: {$ctx['action']} | Errors: " . implode( '; ', $errors ) );
+		return $this->error( 'validation_failed', 'Request data does not match expected format', 400, $ctx['request_id'] );
+	}
+
+	/**
+	 * Pipeline stage: build and validate the upstream WooCommerce URL.
+	 *
+	 * @param array<string, mixed> $ctx Pipeline context.
+	 * @return WP_REST_Response|null
+	 */
+	private function guard_upstream_url( array &$ctx ): ?WP_REST_Response {
+		$endpoint = $ctx['action_config']['ep'];
 		if ( is_string( $endpoint ) && preg_match( '/\(\?P<id>\\\\d\+\)/', $endpoint ) ) {
-			$raw_id = $data['id'] ?? null;
-			// Must be a positive integer string/number (reject negative, zero, non-numeric).
+			$raw_id = $ctx['data']['id'] ?? null;
 			if ( ! is_numeric( $raw_id ) || (string) (int) $raw_id !== (string) $raw_id || (int) $raw_id <= 0 ) {
-				return $this->error( 'invalid_id', 'A positive integer "id" is required', 400, $request_id );
+				return $this->error( 'invalid_id', 'A positive integer "id" is required', 400, $ctx['request_id'] );
 			}
-			$id     = absint( $raw_id );
+			$id       = absint( $raw_id );
 			$endpoint = preg_replace( '/\(\?P<id>\\\\d\+\)/', (string) $id, $endpoint, 1 );
-			// Remove id from data to prevent it from being added as query param in GET requests.
-			unset( $data['id'] );
+			unset( $ctx['data']['id'] );
 		}
+
 		$wc_url        = rest_url( 'wc/v3/' . $endpoint );
 		$upstream_host = wp_parse_url( $wc_url, PHP_URL_HOST );
 		$site_host     = wp_parse_url( home_url(), PHP_URL_HOST );
 
 		if ( $upstream_host !== $site_host ) {
-			return $this->error( 'invalid_upstream', 'Upstream URL mismatch', 500, $request_id );
+			return $this->error( 'invalid_upstream', 'Upstream URL mismatch', 500, $ctx['request_id'] );
 		}
 
-		// Prepare wp_safe_remote_request arguments.
+		$ctx['wc_url'] = $wc_url;
+		return null;
+	}
+
+	/**
+	 * Pipeline stage: forward to WooCommerce and shape the client response.
+	 *
+	 * @param array<string, mixed> $ctx Pipeline context.
+	 * @return WP_REST_Response
+	 */
+	private function dispatch_upstream( array $ctx ): WP_REST_Response {
+		$data   = $ctx['data'];
+		$method = $ctx['method'];
+		$wc_url = $ctx['wc_url'];
+
 		$args = array(
 			'method'      => $method,
 			'timeout'     => 30,
@@ -334,41 +481,39 @@ class RequestHandler {
 			'sslverify'   => true,
 		);
 
-		if ( $method === 'GET' ) {
+		if ( 'GET' === $method ) {
 			// Reject non-scalar values — array_map('sanitize_text_field') would fatal on nested arrays.
 			foreach ( $data as $key => $value ) {
 				if ( ! is_scalar( $value ) && null !== $value ) {
-					return $this->error( 'invalid_data', 'Query parameters must be scalar values', 400, $request_id );
+					return $this->error( 'invalid_data', 'Query parameters must be scalar values', 400, $ctx['request_id'] );
 				}
 			}
 			$wc_url = add_query_arg( array_map( 'sanitize_text_field', $data ), $wc_url );
 			if ( strlen( $wc_url ) > 8000 ) {
-				return $this->error( 'uri_too_long', 'Request URI exceeds maximum length', 414, $request_id );
+				return $this->error( 'uri_too_long', 'Request URI exceeds maximum length', 414, $ctx['request_id'] );
 			}
 		} else {
 			$args['body'] = wp_json_encode( $data, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR );
 		}
 
-		// Forward request to WooCommerce.
 		$response = wp_safe_remote_request( $wc_url, $args );
 
 		if ( is_wp_error( $response ) ) {
 			Helpers\Logger::error( 'Upstream WC error: ' . sanitize_text_field( $response->get_error_message() ) );
-			return $this->error( 'upstream_failure', 'Failed to reach WooCommerce API', 502, $request_id );
+			return $this->error( 'upstream_failure', 'Failed to reach WooCommerce API', 502, $ctx['request_id'] );
 		}
 
 		$code      = wp_remote_retrieve_response_code( $response );
 		$resp_body = wp_remote_retrieve_body( $response );
 
-		// Hide internal errors in production.
 		if ( $code >= 500 && ( ! defined( 'WP_DEBUG' ) || ! WP_DEBUG ) ) {
 			$resp_body = wp_json_encode( array( 'error' => 'Internal server error' ) );
 		}
 
-		$duration = round( ( microtime( true ) - $start_time ) * 1000, 2 );
+		$duration = round( ( microtime( true ) - $ctx['start_time'] ) * 1000, 2 );
 		$status   = $code < 400 ? 'OK' : 'FAIL';
 
-		Helpers\Logger::info( "{$status} {$code} {$action} {$duration}ms | REQ {$request_id}" );
+		Helpers\Logger::info( "{$status} {$code} {$ctx['action']} {$duration}ms | REQ {$ctx['request_id']}" );
 
 		$resp = new WP_REST_Response(
 			array(
@@ -378,7 +523,7 @@ class RequestHandler {
 			$code
 		);
 
-		$resp->header( 'X-Request-ID', $request_id );
+		$resp->header( 'X-Request-ID', $ctx['request_id'] );
 		$resp->header( 'X-Proxy-Version', WSP_VERSION );
 		$resp->header( 'Content-Type', 'application/json; charset=' . get_option( 'blog_charset' ) );
 
