@@ -60,6 +60,35 @@ final class RequestHandlerCharacterizationTest extends TestCase
             static fn( $v ) => is_string( $v ) ? stripslashes( $v ) : $v
         );
 
+        Functions\when( 'get_user_by' )->alias(
+            static function ( string $field, int $id ) {
+                if ( $field === 'id' && $id > 0 ) {
+                    $user          = new \stdClass();
+                    $user->ID      = $id;
+                    $user->roles   = array( 'customer' );
+                    return $user;
+                }
+                return false;
+            }
+        );
+
+        Functions\when( 'wc_get_order' )->alias(
+            static function ( int $order_id ) {
+                $order = new class( $order_id ) {
+                    public $id;
+                    public $customer_id;
+                    public function __construct( int $id ) {
+                        $this->id = $id;
+                        $this->customer_id = 555;
+                    }
+                    public function get_customer_id(): int {
+                        return $this->customer_id;
+                    }
+                };
+                return $order;
+            }
+        );
+
         Functions\when( 'rest_url' )->alias(
             static fn( string $path = '' ) => 'https://example.com/wp-json/' . ltrim( $path, '/' )
         );
@@ -124,6 +153,21 @@ final class RequestHandlerCharacterizationTest extends TestCase
             $request->set_header( $name, $value );
         }
 
+        return $request;
+    }
+
+    /**
+     * Creates a signed request with a valid customer JWT for auth-required actions.
+     *
+     * @param string $action   Action name.
+     * @param array  $data     Request data.
+     * @param string $method   HTTP method.
+     * @param int    $customer_id Customer ID to encode in JWT.
+     */
+    private function make_authenticated_request( string $action, array $data = array(), string $method = 'GET', int $customer_id = 42 ): WP_REST_Request {
+        $jwt = JwtHelper::issue( $customer_id );
+        $request = $this->make_request( $action, $data, $method );
+        $request->set_header( 'x-customer-jwt', $jwt );
         return $request;
     }
 
@@ -198,6 +242,42 @@ final class RequestHandlerCharacterizationTest extends TestCase
         $result = $this->dispatch( $this->make_request( 'getProduct', array( 'id' => 42 ) ) );
         $this->assertSame( 200, $result['status'] );
         $this->assertSame( 'https://example.com/wp-json/wc/v3/products/42', $this->captured_url );
+    }
+
+    public function test_get_customer_substitutes_id_in_upstream_url(): void {
+        $result = $this->dispatch( $this->make_authenticated_request( 'getCustomer', array( 'id' => 123 ), 'GET', 123 ) );
+        $this->assertSame( 200, $result['status'] );
+        $this->assertSame( 'https://example.com/wp-json/wc/v3/customers/123', $this->captured_url );
+    }
+
+    public function test_update_order_substitutes_id_in_upstream_url(): void {
+        $result = $this->dispatch( $this->make_authenticated_request( 'updateOrder', array( 'id' => 555, 'status' => 'completed' ), 'PUT', 555 ) );
+        $this->assertSame( 200, $result['status'] );
+        $this->assertSame( 'https://example.com/wp-json/wc/v3/orders/555', $this->captured_url );
+    }
+
+    public function test_missing_id_returns_400_without_http_call(): void {
+        $this->captured_url = null;
+        $result = $this->dispatch( $this->make_request( 'getProduct', array( 'other' => 'data' ) ) );
+        $this->assertSame( 400, $result['status'] );
+        $this->assertSame( 'invalid_id', $result['data']['error']['code'] );
+        $this->assertNull( $this->captured_url, 'No HTTP call should be made when id is missing' );
+    }
+
+    public function test_zero_id_returns_400_without_http_call(): void {
+        $this->captured_url = null;
+        $result = $this->dispatch( $this->make_request( 'getProduct', array( 'id' => 0 ) ) );
+        $this->assertSame( 400, $result['status'] );
+        $this->assertSame( 'invalid_id', $result['data']['error']['code'] );
+        $this->assertNull( $this->captured_url, 'No HTTP call should be made when id is zero' );
+    }
+
+    public function test_negative_id_returns_400_without_http_call(): void {
+        $this->captured_url = null;
+        $result = $this->dispatch( $this->make_request( 'getProduct', array( 'id' => -5 ) ) );
+        $this->assertSame( 400, $result['status'] );
+        $this->assertSame( 'invalid_id', $result['data']['error']['code'] );
+        $this->assertNull( $this->captured_url, 'No HTTP call should be made when id is negative' );
     }
 
     public function test_missing_action_returns_400(): void {

@@ -79,6 +79,16 @@ class RequestHandler {
 			'methods' => array( 'POST' ),
 			'auth'    => 'none',
 		),
+		'refreshToken'     => array(
+			'ep'      => null,
+			'methods' => array( 'POST' ),
+			'auth'    => 'none',
+		),
+		'customerLogout'   => array(
+			'ep'      => null,
+			'methods' => array( 'POST' ),
+			'auth'    => 'none',
+		),
 	);
 
 	/** Runtime-loaded rate limit configuration */
@@ -191,9 +201,13 @@ class RequestHandler {
 		// Customer JWT authentication.
 		$customer_id = $this->get_customer_id_from_jwt( $request );
 
-		// Special built-in auth endpoints.
-		if ( in_array( $action, array( 'customerLogin', 'customerRegister' ), true ) ) {
-			return $this->handle_customer_auth( $action, $data, $request_id );
+		// Special built-in auth endpoints — rate-limited BEFORE dispatch (brute-force fix).
+		if ( in_array( $action, array( 'customerLogin', 'customerRegister', 'refreshToken', 'customerLogout' ), true ) ) {
+			$auth_rate_error = $this->rate_limit( $headers['app_token'], $ip, $action, $request_id );
+			if ( $auth_rate_error ) {
+				return $auth_rate_error;
+			}
+			return $this->handle_customer_auth( $action, $data, $request_id, $request );
 		}
 
 		// Action whitelist & method check.
@@ -259,7 +273,20 @@ class RequestHandler {
 		}
 
 		// Build upstream WooCommerce URL.
-		$wc_url        = rest_url( 'wc/v3/' . $action_config['ep'] );
+		// Pattern placeholders (e.g. `(?P<id>\d+)`) are substituted from $data using absint().
+		$endpoint = $action_config['ep'];
+		if ( is_string( $endpoint ) && preg_match( '/\(\?P<id>\\\\d\+\)/', $endpoint ) ) {
+			$raw_id = $data['id'] ?? null;
+			// Must be a positive integer string/number (reject negative, zero, non-numeric).
+			if ( ! is_numeric( $raw_id ) || (string) (int) $raw_id !== (string) $raw_id || (int) $raw_id <= 0 ) {
+				return $this->error( 'invalid_id', 'A positive integer "id" is required', 400, $request_id );
+			}
+			$id     = absint( $raw_id );
+			$endpoint = preg_replace( '/\(\?P<id>\\\\d\+\)/', (string) $id, $endpoint, 1 );
+			// Remove id from data to prevent it from being added as query param in GET requests.
+			unset( $data['id'] );
+		}
+		$wc_url        = rest_url( 'wc/v3/' . $endpoint );
 		$upstream_host = wp_parse_url( $wc_url, PHP_URL_HOST );
 		$site_host     = wp_parse_url( home_url(), PHP_URL_HOST );
 
@@ -456,11 +483,13 @@ class RequestHandler {
 			$count = $new_count;
 
 			if ( $count > $limits[ $type ] ) {
-				header( 'Retry-After: ' . $win );
+				if ( ! headers_sent() ) {
+					header( 'Retry-After: ' . $win );
+				}
 				return $this->error( 'rate_limit_exceeded', 'Too many requests', 429, $req_id );
 			}
 
-			if ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
+			if ( defined( 'WP_DEBUG' ) && WP_DEBUG && ! headers_sent() ) {
 				header( "X-RateLimit-Remaining-{$type}: " . max( 0, $limits[ $type ] - $count ) );
 				header( "X-RateLimit-Limit-{$type}: " . $limits[ $type ] );
 				header( "X-RateLimit-Reset-{$type}: " . ( time() + $win ) );
@@ -482,14 +511,15 @@ class RequestHandler {
 	}
 
 	/**
-	 * Handles customerLogin and customerRegister actions.
+	 * Handles customerLogin, customerRegister, refreshToken and customerLogout actions.
 	 *
-	 * @param string $action     Action name.
-	 * @param array  $data       Request data.
-	 * @param string $request_id Request ID.
+	 * @param string               $action     Action name.
+	 * @param array<string, mixed> $data       Request data.
+	 * @param string               $request_id Request ID.
+	 * @param WP_REST_Request|null $request    Original request (needed for JWT header on logout).
 	 * @return WP_REST_Response
 	 */
-	private function handle_customer_auth( string $action, array $data, string $request_id ): WP_REST_Response {
+	private function handle_customer_auth( string $action, array $data, string $request_id, ?WP_REST_Request $request = null ): WP_REST_Response {
 		if ( $action === 'customerLogin' ) {
 			$user = wp_authenticate( $data['username_or_email'] ?? '', $data['password'] ?? '' );
 			if ( is_wp_error( $user ) ) {
@@ -499,12 +529,13 @@ class RequestHandler {
 			if ( ! $wc_customer->get_id() ) {
 				return $this->error( 'not_customer', 'User is not a WooCommerce customer', 403, $request_id );
 			}
-			$jwt = \WooSecureProxy\Helpers\JwtHelper::issue( $wc_customer->get_id() );
+			$customer_id = $wc_customer->get_id();
 			return new WP_REST_Response(
 				array(
-					'success'     => true,
-					'jwt'         => $jwt,
-					'customer_id' => $wc_customer->get_id(),
+					'success'       => true,
+					'jwt'           => \WooSecureProxy\Helpers\JwtHelper::issue( $customer_id ),
+					'refresh_token' => \WooSecureProxy\Helpers\JwtHelper::issue_refresh( $customer_id ),
+					'customer_id'   => $customer_id,
 				),
 				200
 			);
@@ -523,14 +554,44 @@ class RequestHandler {
 			if ( is_wp_error( $user_id ) ) {
 				return $this->error( 'registration_failed', $user_id->get_error_message(), 400, $request_id );
 			}
-			$jwt = \WooSecureProxy\Helpers\JwtHelper::issue( $user_id );
 			return new WP_REST_Response(
 				array(
-					'success'     => true,
-					'jwt'         => $jwt,
-					'customer_id' => $user_id,
+					'success'       => true,
+					'jwt'           => \WooSecureProxy\Helpers\JwtHelper::issue( $user_id ),
+					'refresh_token' => \WooSecureProxy\Helpers\JwtHelper::issue_refresh( $user_id ),
+					'customer_id'   => $user_id,
 				),
 				201
+			);
+		}
+
+		if ( $action === 'refreshToken' ) {
+			$refresh_token = isset( $data['refresh_token'] ) && is_string( $data['refresh_token'] ) ? $data['refresh_token'] : '';
+			$new_jwt       = $refresh_token !== '' ? \WooSecureProxy\Helpers\JwtHelper::refresh( $refresh_token ) : null;
+			if ( null === $new_jwt ) {
+				return $this->error( 'invalid_refresh_token', 'Refresh token is invalid or expired', 401, $request_id );
+			}
+			return new WP_REST_Response(
+				array(
+					'success' => true,
+					'jwt'     => $new_jwt,
+				),
+				200
+			);
+		}
+
+		if ( $action === 'customerLogout' ) {
+			$jwt = $request ? $request->get_header( 'x-customer-jwt' ) : '';
+			if ( is_string( $jwt ) && $jwt !== '' ) {
+				\WooSecureProxy\Helpers\JwtHelper::revoke( $jwt );
+			}
+			$refresh_token = isset( $data['refresh_token'] ) && is_string( $data['refresh_token'] ) ? $data['refresh_token'] : '';
+			if ( $refresh_token !== '' ) {
+				\WooSecureProxy\Helpers\JwtHelper::revoke( $refresh_token );
+			}
+			return new WP_REST_Response(
+				array( 'success' => true ),
+				200
 			);
 		}
 

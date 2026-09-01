@@ -25,6 +25,15 @@ use Exception;
 
 class JwtHelper {
 
+	/** Proxy audience claim value — binds tokens to this proxy. */
+	private const AUDIENCE = 'woosecureproxy';
+
+	/** Default access-token lifetime in minutes. */
+	private const ACCESS_TTL_MIN = 60;
+
+	/** Default refresh-token lifetime in minutes (30 days). */
+	private const REFRESH_TTL_MIN = 43200;
+
 	/**
 	 * Returns the PROXY_SECRET if it is properly defined and strong enough.
 	 *
@@ -39,14 +48,15 @@ class JwtHelper {
 	/**
 	 * Issues a new JWT for a given customer.
 	 *
-	 * @param int $customer_id        WordPress user ID of the customer.
-	 * @param int $expires_minutes    Token lifetime in minutes (default: 10080 = 7 days).
+	 * @param int    $customer_id     WordPress user ID of the customer.
+	 * @param int    $expires_minutes Token lifetime in minutes (default: 60).
+	 * @param string $scope           Token scope: 'customer' (access) or 'refresh'.
 	 *
 	 * @return string Encoded JWT token.
 	 * @throws Exception If PROXY_SECRET is not configured properly.
 	 * @since  1.0.0
 	 */
-	public static function issue( int $customer_id, int $expires_minutes = 10080 ): string {
+	public static function issue( int $customer_id, int $expires_minutes = self::ACCESS_TTL_MIN, string $scope = 'customer' ): string {
 		$secret = self::get_secret();
 		if ( $secret === '' ) {
 			throw new Exception( 'PROXY_SECRET is not defined or too weak' );
@@ -57,10 +67,11 @@ class JwtHelper {
 
 		$payload = array(
 			'iss'   => wp_parse_url( home_url(), PHP_URL_HOST ), // Issuer (site domain).
+			'aud'   => 'woosecureproxy',                        // Audience claim.
 			'iat'   => $issued_at,                           // Issued at.
 			'exp'   => $expire_at,                           // Expiration time.
 			'sub'   => $customer_id,                         // Subject (customer ID).
-			'scope' => 'customer',                          // Fixed scope.
+			'scope' => $scope,                              // Fixed scope.
 			'jti'   => bin2hex( random_bytes( 16 ) ),           // Unique token ID (for revocation).
 		);
 
@@ -103,7 +114,16 @@ class JwtHelper {
 				return null;
 			}
 
+			if ( ( $decoded->aud ?? '' ) !== self::AUDIENCE ) {
+				return null;
+			}
+
 			if ( ( $decoded->iss ?? '' ) !== wp_parse_url( home_url(), PHP_URL_HOST ) ) {
+				return null;
+			}
+
+			// Revocation check by jti.
+			if ( isset( $decoded->jti ) && self::is_jti_revoked( (string) $decoded->jti ) ) {
 				return null;
 			}
 
@@ -156,12 +176,83 @@ class JwtHelper {
 		try {
 			$decoded = JWT::decode( $token, new Key( self::get_secret(), 'HS256' ) );
 			if ( isset( $decoded->jti ) ) {
-				return (bool) get_transient( 'wsp_jwt_revoked_' . $decoded->jti );
+				return self::is_jti_revoked( (string) $decoded->jti );
 			}
 		} catch ( Exception $e ) {
 			return true; // Consider any invalid token as revoked/unsafe.
 		}
 
 		return false;
+	}
+
+	/**
+	 * Checks whether a token ID has been revoked.
+	 *
+	 * @param string $jti Token ID.
+	 * @return bool True if revoked.
+	 */
+	private static function is_jti_revoked( string $jti ): bool {
+		return (bool) get_transient( 'wsp_jwt_revoked_' . $jti );
+	}
+
+	/**
+	 * Issues a long-lived refresh token for a customer.
+	 *
+	 * @param int $customer_id WordPress user ID of the customer.
+	 * @return string Encoded refresh JWT.
+	 * @throws Exception If PROXY_SECRET is not configured properly.
+	 * @since  1.1.0
+	 */
+	public static function issue_refresh( int $customer_id ): string {
+		return self::issue( $customer_id, self::REFRESH_TTL_MIN, 'refresh' );
+	}
+
+	/**
+	 * Exchanges a valid refresh token for a fresh access token.
+	 *
+	 * @param string $refresh_token Raw refresh JWT.
+	 * @return string|null New access JWT, or null if the refresh token is invalid.
+	 * @since  1.1.0
+	 */
+	public static function refresh( string $refresh_token ): ?string {
+		$secret = self::get_secret();
+		if ( $secret === '' ) {
+			return null;
+		}
+
+		try {
+			$decoded = JWT::decode( $refresh_token, new Key( $secret, 'HS256' ) );
+
+			if ( ( $decoded->scope ?? '' ) !== 'refresh' ) {
+				return null;
+			}
+
+			if ( ( $decoded->aud ?? '' ) !== self::AUDIENCE ) {
+				return null;
+			}
+
+			if ( ( $decoded->iss ?? '' ) !== wp_parse_url( home_url(), PHP_URL_HOST ) ) {
+				return null;
+			}
+
+			if ( ! isset( $decoded->sub ) || ! is_numeric( $decoded->sub ) ) {
+				return null;
+			}
+
+			if ( isset( $decoded->jti ) && self::is_jti_revoked( (string) $decoded->jti ) ) {
+				return null;
+			}
+
+			$customer_id = (int) $decoded->sub;
+			$user        = get_user_by( 'id', $customer_id );
+
+			if ( ! $user || ! in_array( 'customer', (array) $user->roles, true ) ) {
+				return null;
+			}
+
+			return self::issue( $customer_id );
+		} catch ( Exception $e ) {
+			return null;
+		}
 	}
 }

@@ -128,9 +128,19 @@ $wsp_default_rate_limits = array(
 		'app' => 600,
 		'win' => 60,
 	),
-	'getProducts' => array(
+	'getProducts'      => array(
 		'ip'  => 200,
 		'app' => 10000,
+		'win' => 60,
+	),
+	'customerLogin'    => array(
+		'ip'  => 10,
+		'app' => 100,
+		'win' => 60,
+	),
+	'customerRegister' => array(
+		'ip'  => 5,
+		'app' => 50,
 		'win' => 60,
 	),
 );
