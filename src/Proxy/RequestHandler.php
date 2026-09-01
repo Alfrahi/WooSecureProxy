@@ -136,6 +136,31 @@ class RequestHandler {
 	 * @since  1.0.0
 	 */
 	public function handle_request( WP_REST_Request $request ): WP_REST_Response {
+		try {
+			return $this->dispatch_request( $request );
+		} catch ( \Throwable $e ) { // phpcs:ignore Generic.CodeAnalysis.EmptyStatement.DetectedCatch
+			// Never leak internals to the client; log full detail server-side.
+			$request_id = bin2hex( random_bytes( 8 ) );
+			Helpers\Logger::error(
+				sprintf(
+					'Unhandled exception: %s in %s:%d | REQ %s',
+					$e->getMessage(),
+					$e->getFile(),
+					$e->getLine(),
+					$request_id
+				)
+			);
+			return $this->error( 'internal_error', 'Internal server error', 500, $request_id );
+		}
+	}
+
+	/**
+	 * Core request pipeline (wrapped by handle_request's Throwable guard).
+	 *
+	 * @param WP_REST_Request $request The incoming proxy request.
+	 * @return WP_REST_Response Standardized JSON response.
+	 */
+	private function dispatch_request( WP_REST_Request $request ): WP_REST_Response {
 		$start_time = microtime( true );
 		$request_id = bin2hex( random_bytes( 8 ) );
 		$ip         = Helpers\IpDetector::get_client_ip();
@@ -310,6 +335,12 @@ class RequestHandler {
 		);
 
 		if ( $method === 'GET' ) {
+			// Reject non-scalar values — array_map('sanitize_text_field') would fatal on nested arrays.
+			foreach ( $data as $key => $value ) {
+				if ( ! is_scalar( $value ) && null !== $value ) {
+					return $this->error( 'invalid_data', 'Query parameters must be scalar values', 400, $request_id );
+				}
+			}
 			$wc_url = add_query_arg( array_map( 'sanitize_text_field', $data ), $wc_url );
 			if ( strlen( $wc_url ) > 8000 ) {
 				return $this->error( 'uri_too_long', 'Request URI exceeds maximum length', 414, $request_id );

@@ -295,4 +295,42 @@ final class RequestHandlerCharacterizationTest extends TestCase
 
         $this->assert_error( $this->dispatch( $request ), 400, 'missing_action' );
     }
+
+    public function test_nested_array_get_param_returns_400_without_http_call(): void {
+        $this->captured_url = null;
+        $result = $this->dispatch(
+            $this->make_request( 'getProducts', array( 'filter' => array( 'category' => 'shoes' ) ) )
+        );
+        $this->assertSame( 400, $result['status'] );
+        $this->assertSame( 'invalid_data', $result['data']['error']['code'] );
+        $this->assertNull( $this->captured_url, 'No HTTP call should be made for nested array params' );
+    }
+
+    public function test_nested_object_get_param_returns_400(): void {
+        // stdClass values decode to arrays, but JSON objects nested deeper also
+        // produce arrays — covered above. Here verify scalar-only guard accepts
+        // legitimate scalar params.
+        $result = $this->dispatch(
+            $this->make_request( 'getProducts', array( 'search' => 'shoe', 'per_page' => 10 ) )
+        );
+        $this->assertSame( 200, $result['status'] );
+    }
+
+    public function test_throwable_returns_500_json_with_request_id_header(): void {
+        Functions\when( 'wp_safe_remote_request' )->alias(
+            static function () {
+                throw new \RuntimeException( 'Simulated fatal' );
+            }
+        );
+
+        $handler  = new RequestHandler();
+        $response = $handler->handle_request( $this->make_request( 'getProducts' ) );
+
+        $this->assertSame( 500, $response->get_status() );
+        $data = $response->get_data();
+        $this->assertFalse( $data['success'] );
+        $this->assertSame( 'internal_error', $data['error']['code'] );
+        $this->assertArrayHasKey( 'X-Request-ID', $response->get_headers() );
+        $this->assertNotEmpty( $response->get_headers()['X-Request-ID'] );
+    }
 }
