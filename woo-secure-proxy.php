@@ -228,11 +228,33 @@ add_action(
 			return;
 		}
 
-		if ( wp_cache_supports( 'add_non_persistent_groups' ) ) {
+		// With a persistent object cache, nonces must live in the external
+		// backend (TTL expiry, atomic wp_cache_add). Without one, keep both
+		// groups out of the database-backed object cache — nonces are served
+		// by the dedicated wsp_nonces table instead.
+		if ( wp_cache_supports( 'add_non_persistent_groups' ) && ! wp_using_ext_object_cache() ) {
 			wp_cache_add_non_persistent_groups( array( 'wsp_nonces', 'wsp_rl' ) );
+		} elseif ( wp_cache_supports( 'add_non_persistent_groups' ) ) {
+			wp_cache_add_non_persistent_groups( array( 'wsp_rl' ) );
 		}
 
 		load_plugin_textdomain( 'woo-secure-proxy', false, dirname( WSP_PLUGIN_BASENAME ) . '/languages' );
+
+		// Warn admin when no persistent object cache is available: rate limiting
+		// and nonce replay protection run in degraded (DB-backed) mode.
+		if ( ! \WooSecureProxy\Helpers\NonceStore::has_persistent_cache() ) {
+			add_action(
+				'admin_notices',
+				function () {
+					if ( ! current_user_can( 'manage_options' ) ) {
+						return;
+					}
+					echo '<div class="notice notice-warning is-dismissible"><p>'
+					. esc_html__( 'WooSecureProxy: No persistent object cache detected. Rate limiting and replay protection are running in degraded mode. Install Redis or Memcached for full protection.', 'woo-secure-proxy' )
+					. '</p></div>';
+				}
+			);
+		}
 
 		\WooSecureProxy\WooSecureProxy::instance();
 	}

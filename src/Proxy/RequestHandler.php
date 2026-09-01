@@ -432,26 +432,18 @@ class RequestHandler {
 	/**
 	 * Prevents replay attacks by ensuring nonce is used only once within TTL.
 	 *
-	 * Uses both object cache and transient as fallback.
+	 * Uses NonceStore for atomic check-and-set — either the persistent
+	 * object cache, or the dedicated DB table in degraded mode.
 	 *
 	 * @param string $nonce  Client-provided nonce.
 	 * @param string $req_id Request ID.
 	 * @return WP_REST_Response|null
 	 */
 	private function check_replay( string $nonce, string $req_id ): ?WP_REST_Response {
-		$key = "wsp_nonce_{$nonce}";
-
-		if ( wp_cache_get( $key, 'wsp_nonces' ) ) {
+		if ( ! Helpers\NonceStore::claim( $nonce, PROXY_NONCE_TTL ) ) {
 			return $this->error( 'replay_attack', 'Nonce replay detected', 403, $req_id );
 		}
 
-		wp_cache_set( $key, true, 'wsp_nonces', PROXY_NONCE_TTL );
-
-		if ( get_transient( $key ) ) {
-			return $this->error( 'replay_attack', 'Nonce replay detected', 403, $req_id );
-		}
-
-		set_transient( $key, true, PROXY_NONCE_TTL );
 		return null;
 	}
 

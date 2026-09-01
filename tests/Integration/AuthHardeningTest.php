@@ -62,6 +62,8 @@ final class AuthHardeningTest extends TestCase
 
         Functions\when( 'wp_cache_get' )->justReturn( false );
         Functions\when( 'wp_cache_set' )->justReturn( true );
+        Functions\when( 'wp_cache_add' )->justReturn( true );
+        Functions\when( 'wp_using_ext_object_cache' )->justReturn( true );
 
         Functions\when( 'sanitize_email' )->alias( static fn( $v ) => $v );
         Functions\when( 'is_email' )->alias(

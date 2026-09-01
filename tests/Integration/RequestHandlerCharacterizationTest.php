@@ -54,8 +54,10 @@ final class RequestHandlerCharacterizationTest extends TestCase
 
         Functions\when( 'wp_cache_get' )->justReturn( false );
         Functions\when( 'wp_cache_set' )->justReturn( true );
+        Functions\when( 'wp_cache_add' )->justReturn( true );
         Functions\when( 'get_transient' )->justReturn( false );
         Functions\when( 'set_transient' )->justReturn( true );
+        Functions\when( 'wp_using_ext_object_cache' )->justReturn( true );
         Functions\when( 'wp_unslash' )->alias(
             static fn( $v ) => is_string( $v ) ? stripslashes( $v ) : $v
         );
@@ -215,8 +217,9 @@ final class RequestHandlerCharacterizationTest extends TestCase
     }
 
     public function test_replayed_nonce_returns_403(): void {
-        Functions\when( 'wp_cache_get' )->alias(
-            static fn( string $key ) => str_starts_with( $key, 'wsp_nonce_' ) ? true : false
+        // Nonce claim is atomic via wp_cache_add — false means already used.
+        Functions\when( 'wp_cache_add' )->alias(
+            static fn( string $key ) => str_starts_with( $key, 'wsp_nonce_' ) ? false : true
         );
         $this->assert_error( $this->dispatch( $this->make_request( 'getProducts' ) ), 403, 'replay_attack' );
     }

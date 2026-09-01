@@ -54,12 +54,14 @@ final class WooSecureProxy {
 	/**
 	 * Runs on plugin activation.
 	 *
-	 * Flushes rewrite rules to ensure REST API endpoints are immediately available.
+	 * Flushes rewrite rules and ensures the nonce table exists for
+	 * degraded-mode (no persistent object cache) replay protection.
 	 *
 	 * @return void
 	 * @since  1.0.0
 	 */
 	public static function activate(): void {
+		Helpers\NonceStore::create_table();
 		flush_rewrite_rules();
 	}
 

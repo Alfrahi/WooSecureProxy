@@ -38,6 +38,8 @@ final class RateLimitAuthEndpointsTest extends TestCase
         Functions\when( 'wp_unslash' )->alias( static fn( $v ) => $v );
         Functions\when( 'get_transient' )->justReturn( false );
         Functions\when( 'set_transient' )->justReturn( true );
+        Functions\when( 'wp_using_ext_object_cache' )->justReturn( true );
+        Functions\when( 'wp_cache_add' )->justReturn( true );
         Functions\when( 'get_option' )->alias(
             static fn( string $key ) => $key === 'wsp_allowed_tokens_json' ? '["mobile-v2"]' : ''
         );
