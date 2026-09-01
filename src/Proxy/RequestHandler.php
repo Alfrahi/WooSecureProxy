@@ -521,14 +521,26 @@ class RequestHandler {
 	 */
 	private function handle_customer_auth( string $action, array $data, string $request_id, ?WP_REST_Request $request = null ): WP_REST_Response {
 		if ( $action === 'customerLogin' ) {
+			$identifier = Helpers\LoginThrottle::normalize( $data['username_or_email'] ?? '' );
+
+			if ( Helpers\LoginThrottle::is_locked_out( $identifier ) ) {
+				return $this->error( 'account_locked', 'Too many failed login attempts. Please try again later.', 423, $request_id );
+			}
+
 			$user = wp_authenticate( $data['username_or_email'] ?? '', $data['password'] ?? '' );
+
 			if ( is_wp_error( $user ) ) {
+				Helpers\LoginThrottle::record_failure( $identifier );
 				return $this->error( 'invalid_credentials', 'Invalid email or password', 401, $request_id );
 			}
+
 			$wc_customer = new \WC_Customer( $user->ID );
 			if ( ! $wc_customer->get_id() ) {
 				return $this->error( 'not_customer', 'User is not a WooCommerce customer', 403, $request_id );
 			}
+
+			Helpers\LoginThrottle::clear( $identifier );
+
 			$customer_id = $wc_customer->get_id();
 			return new WP_REST_Response(
 				array(
@@ -544,8 +556,13 @@ class RequestHandler {
 		if ( $action === 'customerRegister' ) {
 			$email    = sanitize_email( $data['email'] ?? '' );
 			$password = $data['password'] ?? '';
-			if ( ! is_email( $email ) || strlen( $password ) < 6 ) {
-				return $this->error( 'invalid_data', 'Valid email and password ≥6 chars required', 400, $request_id );
+			$username = $data['username'] ?? '';
+
+			if ( ! is_email( $email ) || strlen( $password ) < 12 ) {
+				return $this->error( 'invalid_data', 'Valid email and password ≥12 chars required', 400, $request_id );
+			}
+			if ( strtolower( $password ) === strtolower( (string) $username ) || strtolower( $password ) === strtolower( $email ) ) {
+				return $this->error( 'weak_password', 'Password must not match username or email', 400, $request_id );
 			}
 			if ( email_exists( $email ) ) {
 				return $this->error( 'email_exists', 'Email already registered', 409, $request_id );
