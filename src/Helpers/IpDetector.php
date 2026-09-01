@@ -2,11 +2,10 @@
 /**
  * Helper utility to reliably detect the real client IP address.
  *
- * Works behind reverse proxies, Cloudflare, load balancers, etc.
- * Prioritizes WooCommerce's built-in geolocation method when available,
- * otherwise falls back to common trusted proxy headers with strict validation.
- *
- * Only public/reserved-range-disallowed IPs are accepted from headers.
+ * Fail-closed design: REMOTE_ADDR is always the default answer. Forwarding
+ * headers (X-Forwarded-For) are only consulted when REMOTE_ADDR itself is a
+ * trusted proxy, as configured via the WSP_TRUSTED_PROXIES constant (exact
+ * IPs and/or CIDR ranges, IPv4 and IPv6).
  *
  * @package WooSecureProxy\Helpers
  * @since   1.0.0
@@ -14,59 +13,159 @@
 
 namespace WooSecureProxy\Helpers;
 
+/**
+ * Trusted-proxy-aware client IP detection.
+ */
 class IpDetector {
 
 	/**
-	 * Returns the real client IP address, respecting trusted proxy headers.
+	 * Returns the real client IP address.
 	 *
-	 * Detection order:
-	 * 1. WC_Geolocation::get_ip_address() – most reliable when WooCommerce is active
-	 * 2. Common trusted headers (CF-Connecting-IP, X-Forwarded-For, etc.)
-	 * 3. REMOTE_ADDR as final fallback
+	 * Resolution rules:
+	 * 1. REMOTE_ADDR is always the baseline answer.
+	 * 2. Forwarding headers are only considered when REMOTE_ADDR matches an
+	 *    entry in the WSP_TRUSTED_PROXIES constant (exact IP or CIDR range).
+	 * 3. When trusted, the X-Forwarded-For chain is walked right-to-left
+	 *    (with REMOTE_ADDR appended) and the first untrusted, valid IP is
+	 *    returned. Client-supplied leftmost entries are never trusted blindly.
 	 *
-	 * Only returns public IPs from forwarded headers — private/reserved ranges are ignored.
-	 *
-	 * @return string Valid IPv4 or IPv6 address, never empty.
+	 * @return string Valid IPv4 or IPv6 address, '0.0.0.0' when indeterminate.
 	 * @since  1.0.0
 	 */
 	public static function get_client_ip(): string {
-		// Use WooCommerce's trusted geolocation method if available.
-		if ( class_exists( 'WC_Geolocation' ) ) {
-			return WC_Geolocation::get_ip_address();
+		$remote_addr = isset( $_SERVER['REMOTE_ADDR'] ) ? trim( (string) wp_unslash( $_SERVER['REMOTE_ADDR'] ) ) : '';
+
+		if ( ! filter_var( $remote_addr, FILTER_VALIDATE_IP ) ) {
+			return '0.0.0.0';
 		}
 
-		/**
-		 * List of common trusted proxy headers in order of preference.
-		 *
-		 * @var array<string>
-		 */
-		$trusted_headers = array(
-			'HTTP_CF_CONNECTING_IP',    // Cloudflare.
-			'HTTP_X_FORWARDED_FOR',     // Most common proxy header.
-			'HTTP_X_REAL_IP',           // Nginx proxy.
-			'HTTP_X_FORWARDED',
-			'HTTP_FORWARDED_FOR',
-			'HTTP_FORWARDED',
-		);
+		$trusted_proxies = self::get_trusted_proxies();
 
-		foreach ( $trusted_headers as $header ) {
-			if ( ! empty( $_SERVER[ $header ] ) ) {
-				// Unsanitize the header value to avoid slashes and sanitize it.
-				$header_value = wp_unslash( $_SERVER[ $header ] );
+		if ( empty( $trusted_proxies ) || ! self::is_trusted_proxy( $remote_addr, $trusted_proxies ) ) {
+			return $remote_addr;
+		}
+		if ( empty( $_SERVER['HTTP_X_FORWARDED_FOR'] ) ) {
+			return $remote_addr;
+		}
 
-				// Take the first IP in case of comma-separated list.
-				$ip = trim( explode( ',', $header_value )[0] );
+		$chain   = array_map( 'trim', explode( ',', (string) wp_unslash( $_SERVER['HTTP_X_FORWARDED_FOR'] ) ) );
+		$chain[] = $remote_addr;
 
-				// Only accept public IPs — reject private/reserved ranges.
-				if ( filter_var( $ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE ) ) {
-					return $ip;
+		for ( $i = count( $chain ) - 1; $i >= 0; $i-- ) {
+			$candidate = $chain[ $i ];
+
+			if ( ! filter_var( $candidate, FILTER_VALIDATE_IP ) ) {
+				continue;
+			}
+
+			if ( self::is_trusted_proxy( $candidate, $trusted_proxies ) ) {
+				continue;
+			}
+
+			return $candidate;
+		}
+
+		return $remote_addr;
+	}
+
+	/**
+	 * Returns the configured list of trusted proxies.
+	 *
+	 * Reads the WSP_TRUSTED_PROXIES constant, which may be an array or a
+	 * comma-separated string of exact IPs and/or CIDR ranges.
+	 *
+	 * @return array<int, string> Normalized list; empty when not configured.
+	 * @since  1.0.0
+	 */
+	private static function get_trusted_proxies(): array {
+		if ( ! defined( 'WSP_TRUSTED_PROXIES' ) ) {
+			return array();
+		}
+
+		$proxies = constant( 'WSP_TRUSTED_PROXIES' );
+
+		if ( is_string( $proxies ) ) {
+			$proxies = explode( ',', $proxies );
+		}
+
+		if ( ! is_array( $proxies ) ) {
+			return array();
+		}
+
+		return array_values( array_filter( array_map( 'trim', $proxies ) ) );
+	}
+
+	/**
+	 * Checks whether an IP matches the trusted proxy list (exact or CIDR).
+	 *
+	 * @param string             $ip      IP address to check.
+	 * @param array<int, string> $proxies Exact IPs and/or CIDR ranges.
+	 * @return bool
+	 * @since  1.0.0
+	 */
+	private static function is_trusted_proxy( string $ip, array $proxies ): bool {
+		foreach ( $proxies as $proxy ) {
+			if ( false !== strpos( $proxy, '/' ) ) {
+				if ( self::ip_in_cidr( $ip, $proxy ) ) {
+					return true;
 				}
+			} elseif ( strcasecmp( $ip, $proxy ) === 0 ) {
+				return true;
 			}
 		}
 
-		// Final fallback — should rarely be used on properly configured servers.
-		// Unsanitize the REMOTE_ADDR before using it.
-		$remote_ip = isset( $_SERVER['REMOTE_ADDR'] ) ? wp_unslash( $_SERVER['REMOTE_ADDR'] ) : '0.0.0.0';
-		return $remote_ip;
+		return false;
+	}
+
+	/**
+	 * Checks whether an IP is inside a CIDR range (IPv4 or IPv6).
+	 *
+	 * @param string $ip   IP address to test.
+	 * @param string $cidr CIDR notation (e.g. '10.0.0.0/8', '2001:db8::/32').
+	 * @return bool
+	 * @since  1.0.0
+	 */
+	private static function ip_in_cidr( string $ip, string $cidr ): bool {
+		$parts = explode( '/', $cidr );
+
+		if ( 2 !== count( $parts ) ) {
+			return false;
+		}
+
+		$subnet = trim( $parts[0] );
+		$bits   = trim( $parts[1] );
+
+		if ( ! filter_var( $subnet, FILTER_VALIDATE_IP ) || ! is_numeric( $bits ) ) {
+			return false;
+		}
+
+		$ip_bin     = @inet_pton( $ip );
+		$subnet_bin = @inet_pton( $subnet );
+
+		if ( false === $ip_bin || false === $subnet_bin || strlen( $ip_bin ) !== strlen( $subnet_bin ) ) {
+			return false;
+		}
+
+		$bits = (int) $bits;
+		$max  = strlen( $ip_bin ) * 8;
+
+		if ( $bits < 0 || $bits > $max ) {
+			return false;
+		}
+
+		$full_bytes = intdiv( $bits, 8 );
+		$remainder  = $bits % 8;
+
+		if ( $full_bytes > 0 && substr( $ip_bin, 0, $full_bytes ) !== substr( $subnet_bin, 0, $full_bytes ) ) {
+			return false;
+		}
+
+		if ( 0 === $remainder ) {
+			return true;
+		}
+
+		$mask = ( 0xff << ( 8 - $remainder ) ) & 0xff;
+
+		return ( ord( $ip_bin[ $full_bytes ] ) & $mask ) === ( ord( $subnet_bin[ $full_bytes ] ) & $mask );
 	}
 }

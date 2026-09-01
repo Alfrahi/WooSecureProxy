@@ -104,6 +104,18 @@ define( 'PROXY_MAX_BODY_SIZE', defined( 'PROXY_MAX_BODY_SIZE' ) ? PROXY_MAX_BODY
 define( 'PROXY_NONCE_TTL', defined( 'PROXY_NONCE_TTL' ) ? PROXY_NONCE_TTL : 600 );
 
 /**
+ * Trusted proxy IP addresses and/or CIDR ranges.
+ *
+ * When REMOTE_ADDR matches an entry in this list, the X-Forwarded-For
+ * header is consulted to determine the real client IP. Accepts exact IPs
+ * (e.g. '10.0.0.1') and CIDR ranges (e.g. '192.168.0.0/16', '2001:db8::/32').
+ * Can be a comma-separated string or an array. Leave undefined to always
+ * trust REMOTE_ADDR (fail-closed).
+ *
+ * @since 1.0.0
+ */
+
+/**
  * Default rate limit configuration per endpoint.
  *
  * Structure:
