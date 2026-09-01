@@ -71,28 +71,11 @@ class IpDetector {
 	/**
 	 * Returns the configured list of trusted proxies.
 	 *
-	 * Reads the WSP_TRUSTED_PROXIES constant, which may be an array or a
-	 * comma-separated string of exact IPs and/or CIDR ranges.
-	 *
 	 * @return array<int, string> Normalized list; empty when not configured.
 	 * @since  1.0.0
 	 */
 	private static function get_trusted_proxies(): array {
-		if ( ! defined( 'WSP_TRUSTED_PROXIES' ) ) {
-			return array();
-		}
-
-		$proxies = constant( 'WSP_TRUSTED_PROXIES' );
-
-		if ( is_string( $proxies ) ) {
-			$proxies = explode( ',', $proxies );
-		}
-
-		if ( ! is_array( $proxies ) ) {
-			return array();
-		}
-
-		return array_values( array_filter( array_map( 'trim', $proxies ) ) );
+		return \WooSecureProxy\Config::trusted_proxies();
 	}
 
 	/**

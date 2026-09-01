@@ -13,9 +13,8 @@ if (!defined('ABSPATH')) {
     define('ABSPATH', sys_get_temp_dir() . '/wsp-fake-wp/');
 }
 
-// Plugin constants normally defined in woo-secure-proxy.php. RequestHandler
-// resolves PROXY_MAX_BODY_SIZE into a class constant at class-definition time,
-// so these must exist before any src/ class is autoloaded.
+// Plugin constants normally defined in woo-secure-proxy.php. Config reads
+// these values at runtime, so they must exist before any src/ class is used.
 define('PROXY_SECRET', 'test-secret-key-with-at-least-32-characters');
 define('PROXY_TIMESTAMP_SKEW', 300);
 define('PROXY_NONCE_TTL', 600);

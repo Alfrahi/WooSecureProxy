@@ -40,9 +40,7 @@ class JwtHelper {
 	 * @return string The secret key, or empty string if missing/invalid.
 	 */
 	private static function get_secret(): string {
-		return defined( 'PROXY_SECRET' ) && is_string( PROXY_SECRET ) && strlen( PROXY_SECRET ) >= 32
-		? PROXY_SECRET
-		: '';
+		return \WooSecureProxy\Config::proxy_secret();
 	}
 
 	/**

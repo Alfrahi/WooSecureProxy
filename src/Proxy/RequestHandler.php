@@ -26,12 +26,10 @@ namespace WooSecureProxy\Proxy;
 use WP_REST_Request;
 use WP_REST_Response;
 use WooSecureProxy\Auth\KeyManager;
+use WooSecureProxy\Config;
 use WooSecureProxy\Helpers;
 
 class RequestHandler {
-
-	/** Maximum allowed request body size (defaults to PROXY_MAX_BODY_SIZE constant) */
-	private const MAX_BODY_SIZE = PROXY_MAX_BODY_SIZE;
 
 	/**
 	 * List of allowed proxy actions and their corresponding WooCommerce REST endpoints.
@@ -251,7 +249,7 @@ class RequestHandler {
 	 * @return WP_REST_Response|null
 	 */
 	private function guard_size( array $ctx ): ?WP_REST_Response {
-		if ( strlen( $ctx['raw_body'] ) > self::MAX_BODY_SIZE ) {
+		if ( strlen( $ctx['raw_body'] ) > Config::max_body_size() ) {
 			return $this->error( 'payload_too_large', 'Request payload exceeds size limit', 413, $ctx['request_id'] );
 		}
 		if ( trim( $ctx['raw_body'] ) === '' ) {
@@ -575,7 +573,7 @@ class RequestHandler {
 			return $this->error( 'invalid_token', 'Invalid or revoked app token', 403, $req_id );
 		}
 
-		if ( ! ctype_digit( $headers['timestamp'] ) || abs( time() - (int) $headers['timestamp'] ) > PROXY_TIMESTAMP_SKEW ) {
+		if ( ! ctype_digit( $headers['timestamp'] ) || abs( time() - (int) $headers['timestamp'] ) > Config::timestamp_skew() ) {
 			return $this->error( 'invalid_timestamp', 'Timestamp outside allowed skew', 403, $req_id );
 		}
 
@@ -596,7 +594,7 @@ class RequestHandler {
 	 */
 	private function verify_signature( array $headers, string $raw_body, string $req_id ): ?WP_REST_Response {
 		$string_to_sign = $headers['timestamp'] . $headers['nonce'] . $raw_body;
-		$expected       = strtolower( hash_hmac( 'sha256', $string_to_sign, PROXY_SECRET ) );
+		$expected       = strtolower( hash_hmac( 'sha256', $string_to_sign, Config::proxy_secret() ) );
 
 		if ( ! hash_equals( $expected, strtolower( $headers['signature'] ) ) ) {
 			return $this->error( 'invalid_signature', 'HMAC signature verification failed', 403, $req_id );
@@ -616,7 +614,7 @@ class RequestHandler {
 	 * @return WP_REST_Response|null
 	 */
 	private function check_replay( string $nonce, string $req_id ): ?WP_REST_Response {
-		if ( ! Helpers\NonceStore::claim( $nonce, PROXY_NONCE_TTL ) ) {
+		if ( ! Helpers\NonceStore::claim( $nonce, Config::nonce_ttl() ) ) {
 			return $this->error( 'replay_attack', 'Nonce replay detected', 403, $req_id );
 		}
 
@@ -815,10 +813,7 @@ class RequestHandler {
 	 * @return array
 	 */
 	private function get_allowed_tokens(): array {
-		$json   = get_option( 'wsp_allowed_tokens_json', '["mobile-v2","app-v3"]' );
-		$tokens = json_decode( $json, true );
-		$tokens = is_array( $tokens ) ? array_values( array_unique( array_filter( $tokens ) ) ) : array( 'mobile-v2' );
-		return array_slice( $tokens, 0, 50 );
+		return Config::allowed_tokens();
 	}
 
 	/**
@@ -827,18 +822,6 @@ class RequestHandler {
 	 * @return array
 	 */
 	private function get_rate_limits(): array {
-		global $wsp_default_rate_limits;
-
-		$json = get_option( 'wsp_rate_limits_json', '' );
-
-		if ( $json !== '' ) {
-			$custom = json_decode( $json, true );
-
-			if ( is_array( $custom ) ) {
-				return array_replace_recursive( $wsp_default_rate_limits, $custom );
-			}
-		}
-
-		return $wsp_default_rate_limits;
+		return Config::rate_limits();
 	}
 }

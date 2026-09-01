@@ -24,10 +24,10 @@ if ( ! defined( 'ABSPATH' ) ) {
 <th scope="row"><?php esc_html_e( 'HMAC Secret (PROXY_SECRET)', 'woo-secure-proxy' ); ?></th>
 <td>
 <code>
-<?php if ( defined( 'PROXY_SECRET' ) && strlen( (string) PROXY_SECRET ) >= 32 ) : ?>
+<?php if ( \WooSecureProxy\Config::proxy_secret() !== '' ) : ?>
 <span style="color:green; font-weight:bold;">
 	<?php esc_html_e( 'Set', 'woo-secure-proxy' ); ?>
-(<?php echo esc_html( strlen( (string) PROXY_SECRET ) ); ?> chars)
+(<?php echo esc_html( strlen( \WooSecureProxy\Config::proxy_secret() ) ); ?> chars)
 </span>
 <?php else : ?>
 <span style="color:red; font-weight:bold;">
@@ -45,11 +45,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 <th scope="row"><?php esc_html_e( 'Internal WooCommerce Auth', 'woo-secure-proxy' ); ?></th>
 <td>
 <?php
-// Check if manual WooCommerce consumer key/secret are properly defined.
-$has_keys = defined( 'WC_CONSUMER_KEY' ) && defined( 'WC_CONSUMER_SECRET' )
-&& trim( WC_CONSUMER_KEY ) !== ''
-&& trim( (string) WC_CONSUMER_SECRET ) !== ''
-&& strlen( (string) WC_CONSUMER_SECRET ) >= 32;
+$has_keys = \WooSecureProxy\Config::has_wc_credentials();
 
 if ( $has_keys ) :
 	?>

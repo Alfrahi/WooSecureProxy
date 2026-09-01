@@ -63,19 +63,16 @@ class KeyManager {
 	 * @since  1.0.0
 	 */
 	public static function get_auth_header(): array {
-		$valid = defined( 'WC_CONSUMER_KEY' )
-		&& defined( 'WC_CONSUMER_SECRET' )
-		&& WC_CONSUMER_KEY !== ''
-		&& (string) WC_CONSUMER_SECRET !== ''
-		&& strlen( (string) WC_CONSUMER_SECRET ) >= 32;
+		$key    = \WooSecureProxy\Config::wc_consumer_key();
+		$secret = \WooSecureProxy\Config::wc_consumer_secret();
 
-		if ( ! $valid ) {
+		if ( $key === '' || $secret === '' ) {
 			add_action( 'admin_notices', array( __CLASS__, 'show_auth_warning' ) );
 			return array();
 		}
 
 		return array(
-			'Authorization' => 'Basic ' . base64_encode( WC_CONSUMER_KEY . ':' . WC_CONSUMER_SECRET ),
+			'Authorization' => 'Basic ' . base64_encode( $key . ':' . $secret ),
 		);
 	}
 
