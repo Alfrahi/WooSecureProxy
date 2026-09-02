@@ -81,11 +81,11 @@ if ( $wsp_has_keys ) :
 		<table class="widefat striped" style="max-width: 640px;">
 		<thead>
 		<tr>
-		<th><?php esc_html_e( 'Day (UTC)', 'woo-secure-proxy' ); ?></th>
-		<th><?php esc_html_e( 'Action', 'woo-secure-proxy' ); ?></th>
-		<th><?php esc_html_e( '2xx', 'woo-secure-proxy' ); ?></th>
-		<th><?php esc_html_e( '4xx', 'woo-secure-proxy' ); ?></th>
-		<th><?php esc_html_e( '5xx', 'woo-secure-proxy' ); ?></th>
+		<th scope="col"><?php esc_html_e( 'Day (UTC)', 'woo-secure-proxy' ); ?></th>
+		<th scope="col"><?php esc_html_e( 'Action', 'woo-secure-proxy' ); ?></th>
+		<th scope="col"><?php esc_html_e( '2xx', 'woo-secure-proxy' ); ?></th>
+		<th scope="col"><?php esc_html_e( '4xx', 'woo-secure-proxy' ); ?></th>
+		<th scope="col"><?php esc_html_e( '5xx', 'woo-secure-proxy' ); ?></th>
 		</tr>
 		</thead>
 		<tbody>

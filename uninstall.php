@@ -38,6 +38,25 @@ function wsp_uninstall_site(): void {
 	// phpcs:ignore WordPress.DB.DirectDatabaseQuery.SchemaChange -- Intentional cleanup on uninstall.
 	$wpdb->query( "DROP TABLE IF EXISTS {$wpdb->prefix}wsp_nonces" );
 
+	// Purge leftover JWT-revocation and login-throttle transients.
+	// Only DB-transients can be cleaned; object-cache copies expire on their own (≤ 30 days).
+	foreach ( array( 'wsp_jwt_revoked_', 'wsp_lock_', 'wsp_lfails_' ) as $wsp_prefix ) {
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery -- Transient cleanup on uninstall; no caching applies.
+		$wpdb->query(
+			$wpdb->prepare(
+				"DELETE FROM {$wpdb->options} WHERE option_name LIKE %s",
+				$wpdb->esc_like( '_transient_' . $wsp_prefix ) . '%'
+			)
+		);
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery -- Transient cleanup on uninstall; no caching applies.
+		$wpdb->query(
+			$wpdb->prepare(
+				"DELETE FROM {$wpdb->options} WHERE option_name LIKE %s",
+				$wpdb->esc_like( '_transient_timeout_' . $wsp_prefix ) . '%'
+			)
+		);
+	}
+
 	// Flush the non-persistent cache groups used for nonces and rate limiting.
 	if ( function_exists( 'wp_cache_flush_group' ) ) {
 		wp_cache_flush_group( 'wsp_nonces' );
