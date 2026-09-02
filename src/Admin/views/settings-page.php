@@ -71,6 +71,39 @@ if ( $wsp_has_keys ) :
 	</tr>
 	</table>
 
+	<h2><?php esc_html_e( 'Request Counters (last 48 h)', 'woo-secure-proxy' ); ?></h2>
+	<?php
+	$wsp_metrics = \WooSecureProxy\Helpers\Metrics::summary();
+	if ( empty( $wsp_metrics ) ) :
+		?>
+		<p><?php esc_html_e( 'No proxied requests recorded yet.', 'woo-secure-proxy' ); ?></p>
+	<?php else : ?>
+		<table class="widefat striped" style="max-width: 640px;">
+		<thead>
+		<tr>
+		<th><?php esc_html_e( 'Day (UTC)', 'woo-secure-proxy' ); ?></th>
+		<th><?php esc_html_e( 'Action', 'woo-secure-proxy' ); ?></th>
+		<th><?php esc_html_e( '2xx', 'woo-secure-proxy' ); ?></th>
+		<th><?php esc_html_e( '4xx', 'woo-secure-proxy' ); ?></th>
+		<th><?php esc_html_e( '5xx', 'woo-secure-proxy' ); ?></th>
+		</tr>
+		</thead>
+		<tbody>
+		<?php foreach ( $wsp_metrics as $wsp_day => $wsp_actions ) : ?>
+			<?php foreach ( $wsp_actions as $wsp_action => $wsp_buckets ) : ?>
+				<tr>
+				<td><?php echo esc_html( $wsp_day ); ?></td>
+				<td><code><?php echo esc_html( $wsp_action ); ?></code></td>
+				<td><?php echo esc_html( (string) ( $wsp_buckets['2xx'] ?? 0 ) ); ?></td>
+				<td><?php echo esc_html( (string) ( $wsp_buckets['4xx'] ?? 0 ) ); ?></td>
+				<td><?php echo esc_html( (string) ( $wsp_buckets['5xx'] ?? 0 ) ); ?></td>
+				</tr>
+			<?php endforeach; ?>
+		<?php endforeach; ?>
+		</tbody>
+		</table>
+	<?php endif; ?>
+
 	<?php
 	// Final warning banner when the entire plugin is disabled due to missing critical constants.
 	if ( defined( 'WSP_DISABLED' ) && WSP_DISABLED ) :

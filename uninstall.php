@@ -20,6 +20,8 @@ if ( ! defined( 'WP_UNINSTALL_PLUGIN' ) ) {
 	exit;
 }
 
+require_once __DIR__ . '/src/Helpers/Metrics.php';
+
 /**
  * Removes all plugin data for the current blog context.
  *
@@ -30,6 +32,7 @@ function wsp_uninstall_site(): void {
 
 	delete_option( 'wsp_allowed_tokens_json' );
 	delete_option( 'wsp_rate_limits_json' );
+	delete_option( \WooSecureProxy\Helpers\Metrics::OPTION );
 
 	// Drop the replay-protection nonce table for this blog.
 	// phpcs:ignore WordPress.DB.DirectDatabaseQuery.SchemaChange -- Intentional cleanup on uninstall.

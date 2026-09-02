@@ -199,12 +199,31 @@ class RequestHandler {
 		) {
 			$result = $this->{$stage}( $ctx );
 			if ( $result instanceof WP_REST_Response ) {
+				$this->record_metrics( $ctx, $result );
 				return $result;
 			}
 		}
 
 		// Unreachable — dispatch_upstream() always returns a response.
 		return $this->error( 'internal_error', 'Internal server error', 500, $ctx['request_id'] );
+	}
+
+	/**
+	 * Records one counter observation after the pipeline produced a response.
+	 *
+	 * @param array<string, mixed> $ctx      Pipeline context.
+	 * @param WP_REST_Response     $response Final response.
+	 * @return void
+	 * @since  1.0.0
+	 */
+	private function record_metrics( array $ctx, WP_REST_Response $response ): void {
+		try {
+			$action = isset( $ctx['action'] ) && is_string( $ctx['action'] ) && '' !== $ctx['action'] ? $ctx['action'] : 'unknown';
+			Helpers\Metrics::record( $action, (int) $response->get_status() );
+		} catch ( \Throwable $e ) {
+			// Telemetry must never take down a request.
+			unset( $e );
+		}
 	}
 
 	/**
