@@ -92,13 +92,23 @@ class SettingsPage {
 		register_setting(
 			'wsp_options_group',
 			'wsp_allowed_tokens_json',
-			array( $this, 'sanitize_tokens' )
+			array(
+				'type'              => 'string',
+				'sanitize_callback' => array( $this, 'sanitize_tokens' ),
+				'default'           => '["mobile-v2","app-v3"]',
+				'show_in_rest'      => false,
+			)
 		);
 
 		register_setting(
 			'wsp_options_group',
 			'wsp_rate_limits_json',
-			array( $this, 'sanitize_rate_limits' )
+			array(
+				'type'              => 'string',
+				'sanitize_callback' => array( $this, 'sanitize_rate_limits' ),
+				'default'           => '',
+				'show_in_rest'      => false,
+			)
 		);
 
 		add_settings_section(

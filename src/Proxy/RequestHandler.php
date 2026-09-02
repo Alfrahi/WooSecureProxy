@@ -121,6 +121,9 @@ class RequestHandler {
 			array(
 				'methods'             => 'POST',
 				'callback'            => array( $this, 'handle_request' ),
+				// Auth is HMAC-SHA256 verified inside handle_request() (app token,
+				// signature, nonce, timestamp). This is open routing, not open access:
+				// the permission layer lives in the pipeline, so '__return_true' is correct.
 				'permission_callback' => '__return_true',
 			)
 		);

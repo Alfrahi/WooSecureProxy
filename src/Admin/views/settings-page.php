@@ -35,6 +35,13 @@ if ( ! defined( 'ABSPATH' ) ) {
 </span>
 <p class="description" style="color:red; margin:8px 0 0;">
 	<?php esc_html_e( 'The plugin is completely disabled until a strong PROXY_SECRET is defined in wp-config.php.', 'woo-secure-proxy' ); ?>
+	<?php
+	printf(
+		/* translators: %s: wp-config.php definition example. */
+		esc_html__( 'Generate one in a WP-CLI or admin context with wp_generate_password( 64, true, true ) — or any CSPRNG — then define it yourself: %s. Never paste a secret shown in this admin page into an app; it must be provisioned out-of-band.', 'woo-secure-proxy' ),
+		'<code>define( &quot;PROXY_SECRET&quot;, &quot;&lt;64+ random chars&gt;&quot; );</code>'
+	);
+	?>
 </p>
 <?php endif; ?>
 </code>

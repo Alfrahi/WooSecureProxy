@@ -2,10 +2,14 @@
 /**
  * Uninstall script for WooSecureProxy.
  *
- * This file is executed when the plugin is deleted via the WordPress admin.
- * It performs complete cleanup of all plugin data:
- * - Deletes stored settings/options
- * - Clears non-persistent cache groups used for nonce and rate-limit tracking
+ * Executes when the plugin is deleted via the WordPress admin. Removes every
+ * trace of the plugin:
+ * - Per-site options (settings)
+ * - The wsp_nonces replay-protection table
+ * - Non-persistent cache groups used for rate limiting
+ *
+ * Multisite-aware: iterates all sites and cleans each blog's options and
+ * prefixed nonce table.
  *
  * @package WooSecureProxy
  * @since   1.0.0
@@ -17,24 +21,40 @@ if ( ! defined( 'WP_UNINSTALL_PLUGIN' ) ) {
 }
 
 /**
- * Remove all plugin options from the database.
- */
-delete_option( 'wsp_allowed_tokens_json' );
-delete_option( 'wsp_rate_limits_json' );
-
-/**
- * Clear non-persistent cache groups used by the proxy.
+ * Removes all plugin data for the current blog context.
  *
- * These groups ('wsp_nonces' and 'wsp_rl') are registered as non-persistent
- * during plugin initialization, but some object cache backends may still retain
- * data. We flush them here for complete cleanup.
+ * @since 1.0.0
  */
-foreach ( array( 'wsp_nonces', 'wsp_rl' ) as $group ) {
+function wsp_uninstall_site(): void {
+	global $wpdb;
+
+	delete_option( 'wsp_allowed_tokens_json' );
+	delete_option( 'wsp_rate_limits_json' );
+
+	// Drop the replay-protection nonce table for this blog.
+	// phpcs:ignore WordPress.DB.DirectDatabaseQuery.SchemaChange -- Intentional cleanup on uninstall.
+	$wpdb->query( "DROP TABLE IF EXISTS {$wpdb->prefix}wsp_nonces" );
+
+	// Flush the non-persistent cache groups used for nonces and rate limiting.
 	if ( function_exists( 'wp_cache_flush_group' ) ) {
-		// Preferred method in WordPress 6.1+.
-		wp_cache_flush_group( $group );
-	} else {
-		// Fallback for older WordPress versions.
-		wp_cache_delete_multiple( array_keys( wp_cache_get_multiple( array(), $group ) ), $group );
+		wp_cache_flush_group( 'wsp_nonces' );
+		wp_cache_flush_group( 'wsp_rl' );
 	}
+}
+
+if ( is_multisite() ) {
+	$wsp_site_ids = get_sites(
+		array(
+			'fields' => 'ids',
+			'number' => 0,
+		)
+	);
+
+	foreach ( $wsp_site_ids as $wsp_blog_id ) {
+		switch_to_blog( (int) $wsp_blog_id );
+		wsp_uninstall_site();
+		restore_current_blog();
+	}
+} else {
+	wsp_uninstall_site();
 }
