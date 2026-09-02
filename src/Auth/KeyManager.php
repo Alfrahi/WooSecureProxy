@@ -66,12 +66,13 @@ class KeyManager {
 		$key    = \WooSecureProxy\Config::wc_consumer_key();
 		$secret = \WooSecureProxy\Config::wc_consumer_secret();
 
-		if ( $key === '' || $secret === '' ) {
+		if ( '' === $key || '' === $secret ) {
 			add_action( 'admin_notices', array( __CLASS__, 'show_auth_warning' ) );
 			return array();
 		}
 
 		return array(
+			// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_encode -- RFC 7617 Basic auth transport encoding, not code obfuscation.
 			'Authorization' => 'Basic ' . base64_encode( $key . ':' . $secret ),
 		);
 	}

@@ -16,6 +16,11 @@
 
 namespace WooSecureProxy;
 
+/**
+ * Plugin orchestrator singleton instance, created once by the bootstrap.
+ *
+ * @since 1.0.0
+ */
 final class WooSecureProxy {
 
 	/**

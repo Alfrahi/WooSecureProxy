@@ -1,0 +1,17 @@
+includes:
+    - vendor/szepeviktor/phpstan-wordpress/extension.neon
+
+parameters:
+    level: 6
+    bootstrapFiles:
+        - phpstan-bootstrap.php
+        - stubs/woocommerce.php
+    paths:
+        - src/
+        - woo-secure-proxy.php
+        - uninstall.php
+    excludePaths:
+        # Admin view templates mix HTML and PHP in loose-scope template style;
+        # they are excluded from type analysis (escaping is enforced by PHPCS).
+        - src/Admin/views/*
+    inferPrivatePropertyTypeFromConstructor: true

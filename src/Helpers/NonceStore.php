@@ -135,6 +135,7 @@ class NonceStore {
 			KEY expires (expires)
 		) {$charset_collate};";
 
+		// @phpstan-ignore-next-line (upgrade.php only exists on a real WordPress install; this runs exclusively in that context.)
 		require_once ABSPATH . 'wp-admin/includes/upgrade.php';
 		dbDelta( $sql );
 	}

@@ -29,12 +29,17 @@ use WooSecureProxy\Auth\KeyManager;
 use WooSecureProxy\Config;
 use WooSecureProxy\Helpers;
 
+/**
+ * Verifies, rate-limits and dispatches signed proxy requests to WooCommerce.
+ *
+ * @since 1.0.0
+ */
 class RequestHandler {
 
 	/**
 	 * List of allowed proxy actions and their corresponding WooCommerce REST endpoints.
 	 *
-	 * @var array<string, array>
+	 * @var array<string, array{ep: ?string, methods: string[], auth: string}>
 	 */
 	private array $allowed_actions = array(
 		'getProducts'      => array(
@@ -89,14 +94,17 @@ class RequestHandler {
 		),
 	);
 
-	/** Runtime-loaded rate limit configuration */
+	/** Runtime-loaded rate limit configuration
+	 *
+	 * @var array<string, array<string, int>>
+	 */
 	private array $rate_limits = array();
 
-	/** Runtime-loaded list of allowed X-App-Token values */
+	/** Runtime-loaded list of allowed X-App-Token values
+	 *
+	 * @var string[]
+	 */
 	private array $allowed_tokens = array();
-
-	/** Placeholder for future JSON Schema validation per action */
-	private const JSON_SCHEMAS = array();
 
 	/**
 	 * Constructor – loads current allowed tokens and rate limits from options.
@@ -185,7 +193,6 @@ class RequestHandler {
 				'guard_authz',
 				'inject_customer_context',
 				'guard_rate_limit',
-				'guard_schema',
 				'guard_upstream_url',
 				'dispatch_upstream',
 			) as $stage
@@ -208,7 +215,7 @@ class RequestHandler {
 	 */
 	private function guard_parse_headers( array &$ctx ): ?WP_REST_Response {
 		$ctx['headers'] = $this->extract_headers( $ctx['request'] );
-		Helpers\Logger::info( "REQ {$ctx['request_id']} | IP: {$ctx['ip']} | App: " . ( $ctx['headers']['app_token'] ?? 'missing' ) );
+		Helpers\Logger::info( "REQ {$ctx['request_id']} | IP: {$ctx['ip']} | App: " . ( '' !== $ctx['headers']['app_token'] ? $ctx['headers']['app_token'] : 'missing' ) );
 		return $this->validate_headers( $ctx['headers'], $ctx['request_id'] );
 	}
 
@@ -238,7 +245,7 @@ class RequestHandler {
 	 * @param array<string, mixed> $ctx Pipeline context.
 	 * @return WP_REST_Response|null
 	 */
-	private function guard_server_config( array $ctx ): ?WP_REST_Response {
+	private function guard_server_config( array $ctx ): ?WP_REST_Response { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.Found -- Uniform (array $ctx) signature is required so the pipeline can call every guard stage identically.
 		if ( ! KeyManager::is_configured() ) {
 			return KeyManager::get_disabled_response();
 		}
@@ -282,7 +289,7 @@ class RequestHandler {
 		$ctx['data']   = isset( $body['data'] ) ? $body['data'] : null;
 		$ctx['method'] = strtoupper( isset( $body['method'] ) ? $body['method'] : 'GET' );
 
-		if ( $ctx['action'] === '' ) {
+		if ( '' === $ctx['action'] ) {
 			return $this->error( 'missing_action', 'Request must include "action"', 400, $ctx['request_id'] );
 		}
 
@@ -378,6 +385,8 @@ class RequestHandler {
 	 *
 	 * @param array<string, mixed> $ctx Pipeline context.
 	 * @return WP_REST_Response|null
+	 *
+	 * @phpstan-ignore return.unusedType (Uniform pipeline stage signature: every guard returns ?WP_REST_Response.)
 	 */
 	private function inject_customer_context( array &$ctx ): ?WP_REST_Response {
 		if ( 'createOrder' === $ctx['action'] && $ctx['customer_id'] ) {
@@ -397,34 +406,6 @@ class RequestHandler {
 	 */
 	private function guard_rate_limit( array $ctx ): ?WP_REST_Response {
 		return $this->rate_limit( $ctx['headers']['app_token'], $ctx['ip'], $ctx['action'], $ctx['request_id'] );
-	}
-
-	/**
-	 * Pipeline stage: JSON Schema validation (ready for per-action schemas).
-	 *
-	 * @param array<string, mixed> $ctx Pipeline context.
-	 * @return WP_REST_Response|null
-	 */
-	private function guard_schema( array $ctx ): ?WP_REST_Response {
-		if ( ! isset( self::JSON_SCHEMAS[ $ctx['action'] ] ) ) {
-			return null;
-		}
-
-		$validator = new \JsonSchema\Validator();
-		$validator->validate( $ctx['data'], (object) self::JSON_SCHEMAS[ $ctx['action'] ] );
-
-		if ( $validator->isValid() ) {
-			return null;
-		}
-
-		$errors = array_map(
-			function ( $e ) {
-				return $e['property'] . ': ' . $e['message'];
-			},
-			$validator->getErrors()
-		);
-		Helpers\Logger::warning( "Schema violation | Action: {$ctx['action']} | Errors: " . implode( '; ', $errors ) );
-		return $this->error( 'validation_failed', 'Request data does not match expected format', 400, $ctx['request_id'] );
 	}
 
 	/**
@@ -532,10 +513,10 @@ class RequestHandler {
 	}
 
 	/**
-	 * Extracts and sanitizes required proxy headers from the request.
+	 * Extracts required headers from the incoming request.
 	 *
 	 * @param WP_REST_Request $request Incoming request.
-	 * @return array Normalized headers.
+	 * @return array{app_token: string, timestamp: string, nonce: string, signature: string}
 	 */
 	private function extract_headers( WP_REST_Request $request ): array {
 		$raw = array(
@@ -560,8 +541,8 @@ class RequestHandler {
 	/**
 	 * Validates presence and format of all required proxy headers.
 	 *
-	 * @param array  $headers   Extracted headers.
-	 * @param string $req_id    Request ID for logging.
+	 * @param array<string, string> $headers Extracted headers.
+	 * @param string                $req_id    Request ID for logging.
 	 * @return WP_REST_Response|null Error response or null if valid.
 	 */
 	private function validate_headers( array $headers, string $req_id ): ?WP_REST_Response {
@@ -590,9 +571,9 @@ class RequestHandler {
 	/**
 	 * Verifies HMAC-SHA256 signature over timestamp + nonce + raw body.
 	 *
-	 * @param array  $headers   Headers containing signature.
-	 * @param string $raw_body  Raw request body.
-	 * @param string $req_id    Request ID.
+	 * @param array<string, string> $headers   Headers containing signature.
+	 * @param string                $raw_body  Raw request body.
+	 * @param string                $req_id    Request ID.
 	 * @return WP_REST_Response|null Error or null if valid.
 	 */
 	private function verify_signature( array $headers, string $raw_body, string $req_id ): ?WP_REST_Response {
@@ -634,7 +615,7 @@ class RequestHandler {
 	 * @return WP_REST_Response|null
 	 */
 	private function rate_limit( string $app_token, string $ip, string $action, string $req_id ): ?WP_REST_Response {
-		$action = $action === '' ? 'unknown' : $action;
+		$action = '' === $action ? 'unknown' : $action;
 		$limits = $this->rate_limits[ $action ] ?? $this->rate_limits['default'];
 
 		foreach ( array(
@@ -689,7 +670,7 @@ class RequestHandler {
 	 * @return WP_REST_Response
 	 */
 	private function handle_customer_auth( string $action, array $data, string $request_id, ?WP_REST_Request $request = null ): WP_REST_Response {
-		if ( $action === 'customerLogin' ) {
+		if ( 'customerLogin' === $action ) {
 			$identifier = Helpers\LoginThrottle::normalize( $data['username_or_email'] ?? '' );
 
 			if ( Helpers\LoginThrottle::is_locked_out( $identifier ) ) {
@@ -722,7 +703,7 @@ class RequestHandler {
 			);
 		}
 
-		if ( $action === 'customerRegister' ) {
+		if ( 'customerRegister' === $action ) {
 			$email    = sanitize_email( $data['email'] ?? '' );
 			$password = $data['password'] ?? '';
 			$username = $data['username'] ?? '';
@@ -751,9 +732,9 @@ class RequestHandler {
 			);
 		}
 
-		if ( $action === 'refreshToken' ) {
+		if ( 'refreshToken' === $action ) {
 			$refresh_token = isset( $data['refresh_token'] ) && is_string( $data['refresh_token'] ) ? $data['refresh_token'] : '';
-			$new_jwt       = $refresh_token !== '' ? \WooSecureProxy\Helpers\JwtHelper::refresh( $refresh_token ) : null;
+			$new_jwt       = '' !== $refresh_token ? \WooSecureProxy\Helpers\JwtHelper::refresh( $refresh_token ) : null;
 			if ( null === $new_jwt ) {
 				return $this->error( 'invalid_refresh_token', 'Refresh token is invalid or expired', 401, $request_id );
 			}
@@ -766,13 +747,13 @@ class RequestHandler {
 			);
 		}
 
-		if ( $action === 'customerLogout' ) {
+		if ( 'customerLogout' === $action ) {
 			$jwt = $request ? $request->get_header( 'x-customer-jwt' ) : '';
-			if ( is_string( $jwt ) && $jwt !== '' ) {
+			if ( is_string( $jwt ) && '' !== $jwt ) {
 				\WooSecureProxy\Helpers\JwtHelper::revoke( $jwt );
 			}
 			$refresh_token = isset( $data['refresh_token'] ) && is_string( $data['refresh_token'] ) ? $data['refresh_token'] : '';
-			if ( $refresh_token !== '' ) {
+			if ( '' !== $refresh_token ) {
 				\WooSecureProxy\Helpers\JwtHelper::revoke( $refresh_token );
 			}
 			return new WP_REST_Response(
@@ -813,7 +794,7 @@ class RequestHandler {
 	/**
 	 * Loads allowed app tokens from database option.
 	 *
-	 * @return array
+	 * @return string[]
 	 */
 	private function get_allowed_tokens(): array {
 		return Config::allowed_tokens();
@@ -822,7 +803,7 @@ class RequestHandler {
 	/**
 	 * Loads rate limit configuration – merges custom settings with defaults.
 	 *
-	 * @return array
+	 * @return array<string, array<string, int>>
 	 */
 	private function get_rate_limits(): array {
 		return Config::rate_limits();

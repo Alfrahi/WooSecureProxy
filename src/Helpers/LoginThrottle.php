@@ -82,6 +82,9 @@ class LoginThrottle {
 
 	/**
 	 * Transient key for the lockout flag.
+	 *
+	 * @param string $identifier Normalized identifier.
+	 * @return string
 	 */
 	private static function transient_key( string $identifier ): string {
 		return 'wsp_lock_' . md5( $identifier );
@@ -89,6 +92,9 @@ class LoginThrottle {
 
 	/**
 	 * Transient key for the failure counter.
+	 *
+	 * @param string $identifier Normalized identifier.
+	 * @return string
 	 */
 	private static function count_key( string $identifier ): string {
 		return 'wsp_lfails_' . md5( $identifier );

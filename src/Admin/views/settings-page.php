@@ -52,9 +52,9 @@ if ( ! defined( 'ABSPATH' ) ) {
 <th scope="row"><?php esc_html_e( 'Internal WooCommerce Auth', 'woo-secure-proxy' ); ?></th>
 <td>
 <?php
-$has_keys = \WooSecureProxy\Config::has_wc_credentials();
+$wsp_has_keys = \WooSecureProxy\Config::has_wc_credentials();
 
-if ( $has_keys ) :
+if ( $wsp_has_keys ) :
 	?>
 	<span style="color:green; font-weight:bold;">
 	<?php esc_html_e( 'Active (Manual Keys)', 'woo-secure-proxy' ); ?>

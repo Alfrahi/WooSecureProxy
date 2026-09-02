@@ -14,6 +14,11 @@ declare(strict_types=1);
 
 namespace WooSecureProxy\Admin;
 
+/**
+ * Admin settings page controller.
+ *
+ * @since 1.0.0
+ */
 class SettingsPage {
 
 	/**
@@ -58,7 +63,7 @@ class SettingsPage {
 		}
 
 		$cm_settings = wp_enqueue_code_editor( array( 'type' => 'application/json' ) );
-		if ( $cm_settings === false ) {
+		if ( false === $cm_settings ) {
 			return;
 		}
 
@@ -114,7 +119,7 @@ class SettingsPage {
 		add_settings_section(
 			'wsp_main_section',
 			'',
-			null,
+			'__return_empty_string',
 			'woo-secure-proxy'
 		);
 

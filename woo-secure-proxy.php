@@ -95,12 +95,15 @@ define( 'WSP_PATH', plugin_dir_path( __FILE__ ) );
 define( 'WSP_URL', plugin_dir_url( __FILE__ ) );
 
 /** Allowed clock skew for timestamp validation (seconds) */
+// phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedConstantFound -- Public, documented client-facing constant name; renaming would break existing wp-config.php deployments.
 define( 'PROXY_TIMESTAMP_SKEW', defined( 'PROXY_TIMESTAMP_SKEW' ) ? PROXY_TIMESTAMP_SKEW : 300 );
 
 /** Maximum allowed request body size in bytes (default 512 KB) */
+// phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedConstantFound -- Public, documented client-facing constant name; renaming would break existing wp-config.php deployments.
 define( 'PROXY_MAX_BODY_SIZE', defined( 'PROXY_MAX_BODY_SIZE' ) ? PROXY_MAX_BODY_SIZE : 512 * 1024 );
 
 /** Time-to-live for used nonces (prevents replay attacks) */
+// phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedConstantFound -- Public, documented client-facing constant name; renaming would break existing wp-config.php deployments.
 define( 'PROXY_NONCE_TTL', defined( 'PROXY_NONCE_TTL' ) ? PROXY_NONCE_TTL : 600 );
 
 /**
@@ -125,17 +128,17 @@ define( 'PROXY_NONCE_TTL', defined( 'PROXY_NONCE_TTL' ) ? PROXY_NONCE_TTL : 600 
  */
 global $wsp_default_rate_limits;
 $wsp_default_rate_limits = array(
-	'default'     => array(
+	'default'          => array(
 		'ip'  => 120,
 		'app' => 5000,
 		'win' => 60,
 	),
-	'createOrder' => array(
+	'createOrder'      => array(
 		'ip'  => 15,
 		'app' => 300,
 		'win' => 60,
 	),
-	'updateOrder' => array(
+	'updateOrder'      => array(
 		'ip'  => 30,
 		'app' => 600,
 		'win' => 60,

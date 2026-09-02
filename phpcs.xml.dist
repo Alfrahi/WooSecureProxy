@@ -1,0 +1,50 @@
+<?xml version="1.0"?>
+<ruleset name="WooSecureProxy" namespace="WooSecureProxy\CS">
+	<description>WordPress Coding Standards for WooSecureProxy.</description>
+
+	<file>woo-secure-proxy.php</file>
+	<file>uninstall.php</file>
+	<file>src/</file>
+
+	<exclude-pattern>/vendor/</exclude-pattern>
+	<exclude-pattern>/tests/</exclude-pattern>
+	<exclude-pattern>/node_modules/</exclude-pattern>
+
+	<arg name="extensions" value="php"/>
+	<arg value="sp"/>
+	<arg name="parallel" value="8"/>
+
+	<!-- WordPress minimum required version for wpversion-aware sniffs. -->
+	<config name="minimum_supported_wp_version" value="6.0"/>
+
+	<rule ref="WordPress-Core"/>
+	<rule ref="WordPress-Docs"/>
+	<rule ref="WordPress-Extra"/>
+
+	<!-- Plugin prefix and text domain requirements. -->
+	<rule ref="WordPress.NamingConventions.PrefixAllGlobals">
+		<properties>
+			<!-- Trailing-underscore form keeps 'wsp' above the 4-char
+			     minimum prefix length while matching all wsp_* globals. -->
+			<property name="prefixes" type="array">
+				<element value="wsp_"/>
+				<element value="WooSecureProxy"/>
+				<element value="woosecureproxy"/>
+			</property>
+		</properties>
+	</rule>
+	<rule ref="WordPress.WP.I18n">
+		<properties>
+			<property name="text_domain" type="array">
+				<element value="woo-secure-proxy"/>
+			</property>
+		</properties>
+	</rule>
+
+	<!-- PSR-4 (composer.json) requires class files named exactly after the
+	     class (CamelCase.php); both WPCS filename rules are incompatible,
+	     so filename checks are off for the PSR-4 tree. -->
+	<rule ref="WordPress.Files.FileName">
+		<exclude-pattern>/src/</exclude-pattern>
+	</rule>
+</ruleset>

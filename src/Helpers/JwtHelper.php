@@ -23,6 +23,11 @@ use Firebase\JWT\SignatureInvalidException;
 use Firebase\JWT\BeforeValidException;
 use Exception;
 
+/**
+ * Issues, validates, refreshes, and revokes short-lived customer JWTs.
+ *
+ * @since 1.0.0
+ */
 class JwtHelper {
 
 	/** Proxy audience claim value — binds tokens to this proxy. */
@@ -56,7 +61,7 @@ class JwtHelper {
 	 */
 	public static function issue( int $customer_id, int $expires_minutes = self::ACCESS_TTL_MIN, string $scope = 'customer' ): string {
 		$secret = self::get_secret();
-		if ( $secret === '' ) {
+		if ( '' === $secret ) {
 			throw new Exception( 'PROXY_SECRET is not defined or too weak' );
 		}
 
@@ -96,7 +101,7 @@ class JwtHelper {
 		}
 
 		$secret = self::get_secret();
-		if ( $secret === '' ) {
+		if ( '' === $secret ) {
 			return null;
 		}
 
@@ -158,7 +163,7 @@ class JwtHelper {
 			if ( isset( $decoded->jti ) ) {
 				set_transient( 'wsp_jwt_revoked_' . $decoded->jti, true, 30 * DAY_IN_SECONDS );
 			}
-		} catch ( Exception $e ) {
+		} catch ( Exception $e ) { // phpcs:ignore Generic.CodeAnalysis.EmptyStatement.DetectedCatch -- Invalid/expired tokens never need revocation; nothing to do.
 			// Ignore invalid/expired tokens — nothing to revoke.
 		}
 	}
@@ -214,7 +219,7 @@ class JwtHelper {
 	 */
 	public static function refresh( string $refresh_token ): ?string {
 		$secret = self::get_secret();
-		if ( $secret === '' ) {
+		if ( '' === $secret ) {
 			return null;
 		}
 

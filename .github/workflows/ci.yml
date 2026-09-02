@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  quality:
+    name: PHP ${{ matrix.php }} ${{ matrix.check }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['7.4', '8.0', '8.1', '8.2', '8.3']
+        check: [tests]
+        include:
+          - php: '8.3'
+            check: audit
+          - php: '8.3'
+            check: phpstan
+          - php: '8.3'
+            check: phpcs
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          coverage: none
+
+      - name: Install dependencies
+        uses: ramsey/composer-install@v3
+        with:
+          composer-options: --prefer-dist
+
+      - name: Composer audit
+        if: matrix.check == 'audit'
+        # continue-on-error only until Prompt 14 upgrades firebase/php-jwt to v7
+        # (CVE-2025-45769, low severity; v7 requires PHP 8.0, this plugin still
+        # supports 7.4 — the pin decision is Prompt 14's scope).
+        continue-on-error: true
+        run: composer audit --locked
+
+      - name: Fetch PHPStan phar
+        if: matrix.check == 'phpstan'
+        run: mkdir -p tools && curl -fsSL -o tools/phpstan.phar https://github.com/phpstan/phpstan/releases/latest/download/phpstan.phar
+
+      - name: PHPStan
+        if: matrix.check == 'phpstan'
+        run: php -d memory_limit=2G tools/phpstan.phar analyse --no-progress --error-format=github
+
+      - name: PHPCS
+        if: matrix.check == 'phpcs'
+        run: vendor/bin/phpcs
+
+      - name: PHPUnit
+        if: matrix.check == 'tests'
+        run: composer test

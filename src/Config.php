@@ -152,7 +152,7 @@ class Config {
 
 		$json = get_option( 'wsp_rate_limits_json', '' );
 
-		if ( (string) $json !== '' ) {
+		if ( '' !== (string) $json ) {
 			$custom = json_decode( (string) $json, true );
 			if ( is_array( $custom ) ) {
 				return array_replace_recursive( $defaults, $custom );

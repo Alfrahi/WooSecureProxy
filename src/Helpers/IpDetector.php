@@ -122,8 +122,9 @@ class IpDetector {
 			return false;
 		}
 
-		$ip_bin     = @inet_pton( $ip );
-		$subnet_bin = @inet_pton( $subnet );
+		// inet_pton() returns false on invalid input without emitting warnings.
+		$ip_bin     = inet_pton( $ip );
+		$subnet_bin = inet_pton( $subnet );
 
 		if ( false === $ip_bin || false === $subnet_bin || strlen( $ip_bin ) !== strlen( $subnet_bin ) ) {
 			return false;
