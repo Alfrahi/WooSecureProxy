@@ -2,8 +2,8 @@
     "name": "alfrahi/woosecureproxy",
     "description": "Secure WooCommerce REST proxy with HMAC + JWT",
     "require": {
-        "php": ">=7.4",
-        "firebase/php-jwt": "^6.0"
+        "php": "^8.0",
+        "firebase/php-jwt": "^7.0"
     },
     "require-dev": {
         "brain/monkey": "^2.6",

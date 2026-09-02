@@ -12,7 +12,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        php: ['7.4', '8.0', '8.1', '8.2', '8.3']
+        php: ['8.0', '8.1', '8.2', '8.3']
         check: [tests]
         include:
           - php: '8.3'
@@ -38,10 +38,6 @@ jobs:
 
       - name: Composer audit
         if: matrix.check == 'audit'
-        # continue-on-error only until Prompt 14 upgrades firebase/php-jwt to v7
-        # (CVE-2025-45769, low severity; v7 requires PHP 8.0, this plugin still
-        # supports 7.4 — the pin decision is Prompt 14's scope).
-        continue-on-error: true
         run: composer audit --locked
 
       - name: Fetch PHPStan phar

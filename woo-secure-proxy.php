@@ -10,7 +10,7 @@
  * License URI: https://www.gnu.org/licenses/gpl-3.0.html
  * Text Domain: woo-secure-proxy
  * Domain Path: /languages
- * Requires PHP: 7.4
+ * Requires PHP:      8.0
  * Requires at least: 6.0
  * Tested up to: 6.7
  * WC requires at least: 8.0
