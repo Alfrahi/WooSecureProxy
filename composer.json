@@ -3,7 +3,8 @@
     "description": "Secure WooCommerce REST proxy with HMAC + JWT",
     "require": {
         "php": "^8.0",
-        "firebase/php-jwt": "^7.0"
+        "firebase/php-jwt": "^7.0",
+        "justinrainbow/json-schema": "^6.11"
     },
     "require-dev": {
         "brain/monkey": "^2.6",

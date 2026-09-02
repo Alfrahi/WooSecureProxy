@@ -187,6 +187,7 @@ class RequestHandler {
 				'guard_signature',
 				'guard_replay',
 				'guard_parse_body',
+				'guard_schema',
 				'guard_auth_endpoints',
 				'guard_allowlist',
 				'guard_authn',
@@ -397,6 +398,46 @@ class RequestHandler {
 		}
 
 		return null;
+	}
+
+	/**
+	 * Pipeline stage: per-action JSON Schema validation of the data payload.
+	 *
+	 * Runs on the raw client payload, before inject_customer_context() adds
+	 * server-side fields. Logs only field paths and rule names — never values.
+	 *
+	 * @param array<string, mixed> $ctx Pipeline context.
+	 * @return WP_REST_Response|null
+	 */
+	private function guard_schema( array $ctx ): ?WP_REST_Response {
+		$schema = JsonSchemas::for_action( $ctx['action'] );
+		if ( null === $schema ) {
+			return null;
+		}
+
+		$validator = new \JsonSchema\Validator();
+		// json-schema expects stdClass for 'object' types; round-trip converts nested arrays too.
+		$payload = json_decode( (string) wp_json_encode( $ctx['data'] ), false );
+		if ( ! $payload instanceof \stdClass ) {
+			$payload = new \stdClass();
+		}
+		$validator->validate( $payload, json_decode( (string) wp_json_encode( $schema ), false ) );
+
+		if ( $validator->isValid() ) {
+			return null;
+		}
+
+		$problems = array_map(
+			static function ( array $e ): string {
+				$property = is_string( $e['property'] ?? null ) ? $e['property'] : '';
+				$message  = is_string( $e['message'] ?? null ) ? $e['message'] : '';
+				return $property . ': ' . $message;
+			},
+			(array) $validator->getErrors()
+		);
+
+		Helpers\Logger::warning( 'Schema violation: ' . implode( '; ', $problems ), array( 'action' => $ctx['action'] ) );
+		return $this->error( 'validation_failed', 'Request data does not match expected format', 400, $ctx['request_id'] );
 	}
 
 	/**

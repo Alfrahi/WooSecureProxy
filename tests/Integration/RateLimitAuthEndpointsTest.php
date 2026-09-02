@@ -68,8 +68,12 @@ final class RateLimitAuthEndpointsTest extends TestCase
     /** Builds a signed login/register request. */
     private function make_request( string $action ): WP_REST_Request
     {
+        // Schema-conformant payloads (Prompt 16) so rate limiting is what under test.
+        $data      = 'customerRegister' === $action
+            ? array( 'email' => 'a@b.c', 'password' => 'long-enough-password1' )
+            : array( 'username_or_email' => 'a@b.c', 'password' => 'x' );
         $body      = (string) json_encode(
-            array( 'action' => $action, 'data' => array( 'username_or_email' => 'a@b.c', 'password' => 'x' ), 'method' => 'POST' )
+            array( 'action' => $action, 'data' => $data, 'method' => 'POST' )
         );
         $timestamp = (string) time();
         $nonce     = bin2hex( random_bytes( 8 ) );

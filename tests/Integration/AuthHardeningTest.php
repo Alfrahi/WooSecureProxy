@@ -77,11 +77,15 @@ final class AuthHardeningTest extends TestCase
         $body = (string) json_encode(
             array(
                 'action' => $action,
-                'data'   => array(
-                    'username_or_email' => $identifier,
-                    'email'             => $identifier,
-                    'password'          => $password,
-                ),
+                'data'   => 'customerLogin' === $action
+                    ? array(
+                        'username_or_email' => $identifier,
+                        'password'          => $password,
+                    )
+                    : array(
+                        'email'    => $identifier,
+                        'password' => $password,
+                    ),
                 'method' => 'POST',
             )
         );
@@ -165,7 +169,8 @@ final class AuthHardeningTest extends TestCase
             $this->make_request( 'customerRegister', 'new@example.com', 'short' )
         );
         $this->assertSame( 400, $result['status'] );
-        $this->assertSame( 'invalid_data', $result['data']['error']['code'] ?? '' );
+        // Prompt 16: the register schema (minLength 12 on password) rejects first.
+        $this->assertSame( 'validation_failed', $result['data']['error']['code'] ?? '' );
     }
 
     public function test_registration_rejects_password_matching_email(): void {

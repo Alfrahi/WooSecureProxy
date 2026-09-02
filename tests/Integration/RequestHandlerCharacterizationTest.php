@@ -271,7 +271,8 @@ final class RequestHandlerCharacterizationTest extends TestCase
         $this->captured_url = null;
         $result = $this->dispatch( $this->make_request( 'getProduct', array( 'id' => 0 ) ) );
         $this->assertSame( 400, $result['status'] );
-        $this->assertSame( 'invalid_id', $result['data']['error']['code'] );
+        // Prompt 16: the schema's minimum:1 on "id" rejects this earlier now.
+        $this->assertSame( 'validation_failed', $result['data']['error']['code'] );
         $this->assertNull( $this->captured_url, 'No HTTP call should be made when id is zero' );
     }
 
@@ -279,7 +280,8 @@ final class RequestHandlerCharacterizationTest extends TestCase
         $this->captured_url = null;
         $result = $this->dispatch( $this->make_request( 'getProduct', array( 'id' => -5 ) ) );
         $this->assertSame( 400, $result['status'] );
-        $this->assertSame( 'invalid_id', $result['data']['error']['code'] );
+        // Prompt 16: the schema's minimum:1 on "id" rejects this earlier now.
+        $this->assertSame( 'validation_failed', $result['data']['error']['code'] );
         $this->assertNull( $this->captured_url, 'No HTTP call should be made when id is negative' );
     }
 
@@ -302,7 +304,9 @@ final class RequestHandlerCharacterizationTest extends TestCase
             $this->make_request( 'getProducts', array( 'filter' => array( 'category' => 'shoes' ) ) )
         );
         $this->assertSame( 400, $result['status'] );
-        $this->assertSame( 'invalid_data', $result['data']['error']['code'] );
+        // Prompt 16: nested values are now rejected by the schema stage
+        // (earlier than the legacy scalar check, which stays as backstop).
+        $this->assertSame( 'validation_failed', $result['data']['error']['code'] );
         $this->assertNull( $this->captured_url, 'No HTTP call should be made for nested array params' );
     }
 
@@ -332,5 +336,66 @@ final class RequestHandlerCharacterizationTest extends TestCase
         $this->assertSame( 'internal_error', $data['error']['code'] );
         $this->assertArrayHasKey( 'X-Request-ID', $response->get_headers() );
         $this->assertNotEmpty( $response->get_headers()['X-Request-ID'] );
+    }
+
+    /* Prompt 16 — per-action JSON schema validation */
+
+    public function test_create_order_rejects_unknown_top_level_key(): void {
+        $result = $this->dispatch( $this->make_request( 'createOrder', array( 'unknown_key' => 'x' ), 'POST' ) );
+        $this->assert_error( $result, 400, 'validation_failed' );
+    }
+
+    public function test_create_order_rejects_line_item_without_product_id(): void {
+        $result = $this->dispatch(
+            $this->make_request( 'createOrder', array( 'line_items' => array( array( 'quantity' => 2 ) ) ), 'POST' )
+        );
+        $this->assert_error( $result, 400, 'validation_failed' );
+    }
+
+    public function test_create_order_valid_payload_reaches_upstream(): void {
+        $result = $this->dispatch(
+            $this->make_request(
+                'createOrder',
+                array(
+                    'line_items'   => array( array( 'product_id' => 42, 'quantity' => 1 ) ),
+                    'billing'      => array( 'email' => 'buyer@example.com' ),
+                    'payment_method' => 'bacs',
+                ),
+                'POST'
+            )
+        );
+        $this->assertSame( 200, $result['status'] );
+        $this->assertSame( 'https://example.com/wp-json/wc/v3/orders', $this->captured_url );
+    }
+
+    public function test_update_order_rejects_bad_status_enum(): void {
+        $result = $this->dispatch(
+            $this->make_authenticated_request( 'updateOrder', array( 'id' => 555, 'status' => 'banana' ), 'PUT', 555 )
+        );
+        $this->assert_error( $result, 400, 'validation_failed' );
+    }
+
+    public function test_customer_login_missing_password_rejected(): void {
+        $result = $this->dispatch(
+            $this->make_request( 'customerLogin', array( 'username_or_email' => 'a@b.c' ), 'POST' )
+        );
+        $this->assert_error( $result, 400, 'validation_failed' );
+    }
+
+    public function test_customer_register_missing_email_rejected(): void {
+        $result = $this->dispatch(
+            $this->make_request( 'customerRegister', array( 'password' => 'long-enough-password' ), 'POST' )
+        );
+        $this->assert_error( $result, 400, 'validation_failed' );
+    }
+
+    public function test_refresh_token_missing_token_rejected(): void {
+        $result = $this->dispatch( $this->make_request( 'refreshToken', array(), 'POST' ) );
+        $this->assert_error( $result, 400, 'validation_failed' );
+    }
+
+    public function test_customer_logout_rejects_unknown_key(): void {
+        $result = $this->dispatch( $this->make_request( 'customerLogout', array( 'stray' => 1 ), 'POST' ) );
+        $this->assert_error( $result, 400, 'validation_failed' );
     }
 }
